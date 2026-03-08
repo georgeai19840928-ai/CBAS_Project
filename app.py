@@ -1,0 +1,671 @@
+import streamlit as st
+import pandas as pd
+import yfinance as yf
+import ta
+import os
+import requests
+import json
+import logging
+import re
+import time
+from datetime import datetime
+from dotenv import load_dotenv
+import urllib3
+
+# === Selenium 模組 ===
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+# 禁用 SSL 警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# ==========================================
+# 📝 日誌設定
+# ==========================================
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# ==========================================
+# 🔑 設定區 & API Client
+# ==========================================
+load_dotenv()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+LINE_ACCESS_TOKEN = os.getenv("LINE_ACCESS_TOKEN")
+
+if 'gemini_client' not in st.session_state:
+    st.session_state.gemini_client = None
+    if GEMINI_API_KEY:
+        try:
+            from google import genai
+            st.session_state.gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        except: pass
+
+# ==========================================
+# 💾 參數儲存系統 (Config System)
+# ==========================================
+CONFIG_FILE = "strategy_config_v23.json"
+
+DEFAULT_CONFIG = {
+    # --- R 值 (Risk) 參數 ---
+    "risk_price_safe": 110,
+    "risk_price_mid": 120,
+    "risk_price_high": 130,
+    "risk_prem_safe": 10,
+    "risk_prem_mid": 15,
+    "risk_prem_high": 20,
+    
+    # --- P 值 (Potential) 參數 ---
+    "pot_balance_high": 90,
+    "pot_balance_low": 30,
+    "pot_parity_min": 90,
+    "pot_parity_max": 110,
+    "pot_vol_zombie": 500,
+    "pot_vol_active": 2000,
+    "pot_golden_min": 330,
+    "pot_golden_max": 450,
+
+    # --- 濾網預設值 ---
+    "filter_price_min": 110,
+    "filter_price_max": 120,
+    "filter_prem_min": 5,
+    "filter_prem_max": 15,
+    "filter_ratio_min": 90,
+    "filter_parity_min": 90,
+    "filter_parity_max": 110,
+    "filter_vol_min": 1000
+}
+
+def load_config():
+    cfg = DEFAULT_CONFIG.copy()
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                loaded = json.load(f)
+                cfg.update(loaded)
+        except: pass
+    return cfg
+
+def save_config(new_config):
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(new_config, f, indent=4)
+
+config = load_config()
+
+# ==========================================
+# 🛠️ 核心邏輯：R/P 量化評分模型
+# ==========================================
+def calculate_rp_strategy(row, tech_data, listing_days, cfg):
+    price = row['CB市價']
+    premium = row['溢/折價']
+    balance = row['餘額']
+    parity = row['轉換價值']
+    
+    # --- 1. 計算 R 值 (Risk) ---
+    r_score = 0
+    if price < cfg['risk_price_safe']: r_score += 1
+    elif price <= cfg['risk_price_mid']: r_score += 3
+    elif price <= cfg['risk_price_high']: r_score += 6
+    else: r_score += 9 
+    
+    if premium < 0: r_score -= 1
+    elif premium <= cfg['risk_prem_safe']: r_score += 0
+    elif premium <= cfg['risk_prem_high']: r_score += 2 
+    else: r_score += 5
+    r_score = max(0, min(r_score, 10)) 
+
+    # --- 2. 計算 P 值 (Potential) ---
+    p_score = 2 
+    is_golden_timing = False
+    
+    if cfg['pot_golden_min'] <= listing_days <= cfg['pot_golden_max']: 
+        p_score += 3
+        is_golden_timing = True
+    elif listing_days > 0 and listing_days < 180:
+        p_score -= 2
+    
+    days_to_put = row.get('距離賣回日(天)', 9999)
+    if 0 < days_to_put < 365: 
+        p_score += 3
+        is_golden_timing = True
+
+    if balance >= cfg['pot_balance_high']: p_score += 2
+    elif balance < cfg['pot_balance_low']: p_score -= 3
+
+    if cfg['pot_parity_min'] <= parity <= cfg['pot_parity_max']:
+        p_score += 3 
+    elif parity < 80:
+        p_score -= 1
+
+    if tech_data:
+        current_price = tech_data['price']
+        ma87 = tech_data['ma87']
+        vol_avg = tech_data['vol_avg_sheets']
+        current_vol = tech_data['current_vol']
+
+        if pd.notna(ma87) and current_price > ma87: p_score += 2
+        
+        if vol_avg < cfg['pot_vol_zombie']: p_score -= 3
+        elif vol_avg > cfg['pot_vol_active']: p_score += 1
+        
+        if vol_avg > 0 and current_vol > (vol_avg * 2): p_score += 2
+
+    p_score = max(0, min(p_score, 10))
+
+    label = "中性觀察"
+    if r_score <= 5 and p_score >= 5: label = "💎 鄭大精選"
+    elif r_score <= 5: label = "🛡️ 低險保守"
+    elif p_score >= 7: label = "🚀 強勢動能"
+    else: label = "⚠️ 風險偏高"
+        
+    return r_score, p_score, label, is_golden_timing
+
+# ==========================================
+# 🛠️ 工具函數 (🔥 修正版 AI 呼叫)
+# ==========================================
+def send_line_broadcast(msg):
+    if not LINE_ACCESS_TOKEN: return
+    url = "https://api.line.me/v2/bot/message/broadcast"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
+    try: requests.post(url, headers=headers, data=json.dumps({"messages": [{"type": "text", "text": msg}]}))
+    except: pass
+
+def ask_gemini(prompt):
+    client = st.session_state.get('gemini_client')
+    if not client: return "⚠️ API Key Error: Client not initialized"
+    
+    # 🔥 自動重試機制 (解決 429 錯誤)
+    max_retries = 3
+    base_delay = 10
+    
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-lite-001", 
+                contents=prompt
+            )
+            return response.text
+        except Exception as e:
+            error_str = str(e)
+            # 判斷是否為限速錯誤
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+                if attempt < max_retries - 1:
+                    wait_time = base_delay * (attempt + 1)
+                    with st.empty():
+                        for s in range(wait_time, 0, -1):
+                            st.caption(f"⏳ 觸發 API 限速保護，冷卻中... {s} 秒 (第 {attempt+1} 次重試)")
+                            time.sleep(1)
+                    continue
+                else:
+                    return "❌ 分析失敗：API 請求過於頻繁，請稍後再試。"
+            else:
+                return f"AI Error: {error_str}"
+
+@st.cache_data(ttl=3600)
+def get_technical_data(stock_code, fetch_fundamentals=False):
+    suffixes = ['.TW', '.TWO']
+    for suffix in suffixes:
+        try:
+            ticker = f"{stock_code}{suffix}"
+            stock = yf.Ticker(ticker)
+            df = stock.history(period="2y")
+            if df.empty: continue 
+            
+            curr_p = df['Close'].iloc[-1]
+            curr_v = df['Volume'].iloc[-1] / 1000
+            df['60MA'] = df['Close'].rolling(60).mean()
+            df['87MA'] = df['Close'].rolling(87).mean()
+            df['284MA'] = df['Close'].rolling(284).mean()
+            h10 = df['Close'].rolling(10).max().iloc[-1]
+            v_avg = df['Volume'].rolling(5).mean().iloc[-1] / 1000 if df['Volume'].rolling(5).mean().iloc[-1] > 0 else 0
+
+            data = {
+                "ticker": ticker, "price": curr_p, "ma60": df['60MA'].iloc[-1],
+                "ma87": df['87MA'].iloc[-1], "ma284": df['284MA'].iloc[-1],
+                "is_10d_high": curr_p >= h10, "vol_avg_sheets": v_avg, "current_vol": curr_v,
+                "fundamentals": {}, "indicators": {}
+            }
+
+            if fetch_fundamentals:
+                info = stock.info
+                data['fundamentals'] = {
+                    'sector': info.get('sector', '未知'), 'industry': info.get('industry', '未知'),
+                    'pe': info.get('trailingPE', 0), 'eps': info.get('trailingEps', 0),
+                    'roe': info.get('returnOnEquity', 0), 'rev_growth': info.get('revenueGrowth', 0)
+                }
+                rsi = ta.momentum.RSIIndicator(close=df['Close'], window=14)
+                data['indicators']['rsi'] = rsi.rsi().iloc[-1]
+                macd = ta.trend.MACD(close=df['Close'])
+                data['indicators']['macd_hist'] = macd.macd_diff().iloc[-1]
+
+            return data
+        except: continue
+    return None
+
+@st.cache_data(ttl=86400)
+def fetch_tpex_with_selenium():
+    issuer_map = {}
+    try:
+        chrome_options = Options()
+        chrome_options.add_argument("--headless") 
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        #最近上櫃轉(交)換公司債#
+        driver.get("https://www.tpex.org.tw/zh-tw/bond/issue/cbond/listed.html")
+        time.sleep(3)
+        html = driver.page_source
+        driver.quit()
+        
+        dfs = pd.read_html(html)
+        if not dfs: return {}
+        df_table = dfs[0]
+        
+        col_c = next((c for c in df_table.columns if '代碼' in str(c)), None)
+        col_d = next((c for c in df_table.columns if '日期' in str(c)), None)
+        col_n = next((c for c in df_table.columns if '名稱' in str(c)), None)
+            
+        if col_c and col_d:
+            for _, row in df_table.iterrows():
+                try:
+                    c, n, d = str(row[col_c]).strip(), str(row[col_n]).strip() if col_n else "", str(row[col_d]).strip()
+                    if '/' in d:
+                        p = d.split('/')
+                        fd = f"{int(p[0])+1911}-{p[1]}-{p[2]}"
+                        if c not in issuer_map: issuer_map[c] = []
+                        issuer_map[c].append({'full_name': n, 'date': fd})
+                except: continue
+        return issuer_map
+    except: return {}
+
+def parse_pasted_text(raw_text):
+    parsed = {}
+    if raw_text:
+        for line in raw_text.split('\n'):
+            match = re.search(r'(\d{4}).*?(\d{3}/\d{2}/\d{2})', line)
+            if match:
+                c, d = match.group(1), match.group(2)
+                p = d.split('/')
+                parsed[c] = f"{int(p[0])+1911}-{p[1]}-{p[2]}"
+    return parsed
+
+# ==========================================
+# 🚀 主程式 UI 
+# ==========================================
+st.set_page_config(page_title="CBAS 鄭大戰情室 (v23)", layout="wide", page_icon="💎")
+st.title("💎 CBAS 鄭大戰情室 (完整系統版)")
+
+# --- 側邊欄 ---
+st.sidebar.header("📂 資料設定")
+uploaded = st.sidebar.file_uploader("上傳 Excel", type=['xlsx'])
+path = uploaded if uploaded else r'G:\我的雲端硬碟\n8n_project_cbas\CBAS報價表20260126.xlsx' 
+
+if not os.path.exists(path) and not uploaded:
+    st.error(f"找不到檔案: {path}")
+    st.stop()
+
+if 'tpex_data_cache' not in st.session_state:
+    with st.spinner("🚀 啟動自動化爬蟲..."):
+        st.session_state.tpex_data_cache = fetch_tpex_with_selenium()
+tpex_data = st.session_state.tpex_data_cache
+
+with st.sidebar.expander("👉 (備用) 手動貼上網頁資料"):
+    pasted_text = st.text_area("若爬蟲失敗，請貼上:", height=100)
+    manual_data = parse_pasted_text(pasted_text)
+
+try:
+    df = pd.read_excel(path, header=6, engine='openpyxl')
+    if '代號' in df.columns:
+        df['代號'] = df['代號'].astype(str).str.replace(' ', '')
+        df = df[df['代號'].notna()]
+        df['股票代號'] = df['代號'].apply(lambda x: x[:4])
+    
+    for c in ['CB市價', '溢/折價', '餘額', '轉換價值', 'TCRI']:
+        if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce')
+    for c in ['轉換價值', '溢/折價', '餘額']:
+        if c in df.columns and df[c].median() < 10: df[c] *= 100
+        
+    today = datetime.now()
+    for c in ['賣回日', '發行日期', '上市日']:
+        if c in df.columns: 
+            df[c] = pd.to_datetime(df[c], errors='coerce')
+            if c == '賣回日': df['距離賣回日(天)'] = (df[c] - today).dt.days
+    
+    def patch_days(row):
+        if '上市天數' in row and row['上市天數'] > 0: return row['上市天數']
+        c4 = str(row['代號'])[:4]
+        if manual_data and c4 in manual_data: return (today - pd.to_datetime(manual_data[c4])).days
+        if tpex_data and c4 in tpex_data: 
+            if tpex_data[c4]: return (today - pd.to_datetime(tpex_data[c4][0]['date'])).days
+        return 0
+    df['上市天數'] = df.apply(patch_days, axis=1)
+    df['上市天數'] = df['上市天數'].fillna(0)
+
+except Exception as e:
+    st.error(f"Excel 讀取失敗: {e}")
+    st.stop()
+
+# --- 側邊欄：濾網 ---
+st.sidebar.markdown("---")
+st.sidebar.header("🔍 篩選濾網 (可儲存)")
+price_range = st.sidebar.slider("1. CB 市價", 80, 200, 
+                                (config.get('filter_price_min', 110), config.get('filter_price_max', 120)))
+prem_range = st.sidebar.slider("2. 溢價率", -10, 50, 
+                               (config.get('filter_prem_min', 5), config.get('filter_prem_max', 15)))
+ratio_min = st.sidebar.slider("3. 未轉換餘額 > (%)", 0, 100, config.get('filter_ratio_min', 90))
+parity_range = st.sidebar.slider("4. 股價靠近轉換價 (%)", 50, 150, 
+                                 (config.get('filter_parity_min', 90), config.get('filter_parity_max', 110)))
+min_vol_avg = st.sidebar.number_input("5. 五日均量 > (張)", value=config.get('filter_vol_min', 1000), step=100)
+
+if st.sidebar.button("💾 儲存濾網設定"):
+    config['filter_price_min'] = price_range[0]
+    config['filter_price_max'] = price_range[1]
+    config['filter_prem_min'] = prem_range[0]
+    config['filter_prem_max'] = prem_range[1]
+    config['filter_ratio_min'] = ratio_min
+    config['filter_parity_min'] = parity_range[0]
+    config['filter_parity_max'] = parity_range[1]
+    config['filter_vol_min'] = min_vol_avg
+    save_config(config)
+    st.sidebar.success("濾網設定已儲存！")
+
+# --- 側邊欄：評分參數 ---
+with st.sidebar.expander("⚙️ 專家評分參數 (Scoring)", expanded=False):
+    new_cfg = config.copy()
+    st.caption("🛡️ Risk (R值)")
+    c1, c2 = st.columns(2)
+    new_cfg['risk_price_safe'] = c1.number_input("安全價 <", value=config['risk_price_safe'])
+    new_cfg['risk_price_mid'] = c2.number_input("舒適價 <", value=config['risk_price_mid'])
+    new_cfg['risk_price_high'] = st.number_input("警戒價 >", value=config['risk_price_high'])
+    c3, c4 = st.columns(2)
+    new_cfg['risk_prem_safe'] = c3.number_input("安全溢價 <", value=config['risk_prem_safe'])
+    new_cfg['risk_prem_high'] = c4.number_input("危險溢價 >", value=config['risk_prem_high'])
+
+    st.caption("🚀 Potential (P值)")
+    new_cfg['pot_balance_high'] = st.number_input("籌碼安定%", value=config['pot_balance_high'])
+    new_cfg['pot_vol_zombie'] = st.number_input("殭屍量<", value=config['pot_vol_zombie'])
+    new_cfg['pot_vol_active'] = st.number_input("活絡量>", value=config['pot_vol_active'])
+    c5, c6 = st.columns(2)
+    new_cfg['pot_parity_min'] = c5.number_input("甜蜜點下限", value=config['pot_parity_min'])
+    new_cfg['pot_parity_max'] = c6.number_input("甜蜜點上限", value=config['pot_parity_max'])
+    
+    if st.button("💾 儲存評分參數"):
+        save_config(new_cfg)
+        config = new_cfg
+        st.sidebar.success("評分參數已更新！")
+
+# --- 執行篩選 ---
+mask = (df['CB市價'].between(price_range[0], price_range[1])) & \
+       (df['溢/折價'].between(prem_range[0], prem_range[1])) & \
+       (df['餘額'] >= ratio_min) & \
+       (df['轉換價值'].between(parity_range[0], parity_range[1]))
+candidates_pre = df[mask].copy()
+
+final_results = []
+if not candidates_pre.empty:
+    with st.spinner("正在進行 R/P 量化評分..."):
+        for _, row in candidates_pre.iterrows():
+            tech = get_technical_data(row['股票代號'])
+            if tech and tech['vol_avg_sheets'] < min_vol_avg: continue
+            
+            r, p, lbl, gold = calculate_rp_strategy(row, tech, row['上市天數'], config)
+            
+            res = row.to_dict()
+            res.update({
+                'R值': r, 'P值': p, '策略標籤': lbl,
+                '現股價': tech['price'] if tech else 0,
+                '87MA': tech['ma87'] if tech else 0,
+                'MA狀態': '站上' if tech and tech['price'] > tech['ma87'] else '跌破',
+                '均量': int(tech['vol_avg_sheets']) if tech else 0
+            })
+            final_results.append(res)
+
+candidates = pd.DataFrame(final_results)
+
+# ==========================================
+# 📊 主畫面：系統說明書
+# ==========================================
+st.markdown("### 📊 戰情室系統說明書 (System Guide)")
+
+with st.expander("📖 點此展開：系統架構、AI 原理與 R/P 評分邏輯", expanded=False):
+    tab_sys, tab_ai, tab_r, tab_p = st.tabs(["🔄 系統架構", "🧠 AI 原理", "🛡️ R值邏輯", "🚀 P值邏輯"])
+    
+    with tab_sys:
+        st.markdown("#### 🌐 資料來源與處理流程")
+        # 防呆機制：如果沒有 graphviz，改用文字顯示
+        try:
+            st.graphviz_chart("""
+            digraph G {
+                rankdir=LR;
+                node [shape=box, style=filled, fillcolor="#f9f9f9"];
+                
+                subgraph cluster_input {
+                    label = "資料輸入源 (Data Sources)";
+                    style=dashed;
+                    Excel [label="📂 用戶上傳 Excel\n(價格/溢價/餘額)", fillcolor="#e1f5fe"];
+                    TPEX [label="🏛️ 櫃買中心 (TPEX)\n(上市日/發行資料)", fillcolor="#fff9c4"];
+                    Yahoo [label="📈 Yahoo Finance\n(技術面/籌碼/基本面)", fillcolor="#e0f2f1"];
+                }
+                
+                Process [label="⚙️ Python 量化引擎\n(R/P 評分演算法)", shape=component, fillcolor="#ffe0b2"];
+                
+                subgraph cluster_output {
+                    label = "決策輸出 (Outputs)";
+                    style=dashed;
+                    Table [label="📊 戰情儀表板\n(篩選後清單)"];
+                    AI_Agent [label="🤖 AI 首席分析師\n(Gemini 2.0)", shape=ellipse, fillcolor="#e1bee7"];
+                    LINE [label="📱 LINE 廣播\n(即時通知)", fillcolor="#c8e6c9"];
+                }
+                
+                Excel -> Process;
+                TPEX -> Process [label="Selenium"];
+                Yahoo -> Process [label="API"];
+                Process -> Table;
+                Table -> AI_Agent [label="傳送評分數據"];
+                AI_Agent -> LINE [label="生成投資報告"];
+            }
+            """)
+        except:
+            st.info("⚠️ 您的環境未安裝 Graphviz，僅顯示文字流程：")
+            st.text("[Excel/TPEX/Yahoo] --> (Python量化引擎) --> [戰情儀表板] --> (AI 分析師) --> [LINE 廣播]")
+
+        st.info("""
+        **資料來源細節：**
+        1. **Excel 報表**：提供基礎報價、溢價率、未轉換餘額。
+        2. **櫃買中心 (TPEX)**：透過自動化爬蟲 (Selenium) 抓取精確的「上市日期」，用於判斷「黃金期」。
+        3. **Yahoo Finance**：即時抓取母股股價、成交量、均線 (60MA/87MA)、財報數據 (EPS/PE) 與技術指標 (RSI)。
+        """)
+
+    with tab_ai:
+        st.markdown("#### 🧠 AI 大腦揭密 (The Brain)")
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            st.markdown("""
+            **核心模型：**
+            > **Google Gemini 2.0 Flash Lite**
+            
+            **選擇理由：**
+            * **速度快**：適合即時分析。
+            * **邏輯強**：能理解複雜的 R/P 矩陣。
+            """)
+        with c2:
+            st.markdown("**🔍 AI Prompt Design:**")
+            st.code("""
+# Role (角色設定): 
+你是一位精通「鄭大 CB 策略」的首席分析師。
+
+# Context (提供數據):
+- R值: 3分 (低風險)
+- P值: 8分 (高潛力)
+- 狀態: 上市滿一年 (黃金期)
+- 基本面: EPS成長、本益比合理
+
+# Task (任務指令):
+請忽略一般股價波動，專注於「可轉債特性」。
+根據 R/P 分數，判斷是否為「不對稱機會」(下檔有限/上檔無限)。
+最後給出明確操作建議 (買進/觀望)。
+            """, language="yaml")
+
+    with tab_r:
+        st.markdown(f"""
+        **核心概念：尋找「不對稱風險」 (Asymmetric Risk)**
+        * 我們希望找到「跌無可跌 (有債底保護)」，但「漲無止盡」的標的。
+        * **R值越低 (0~3分)**：代表接近債券本質，保本能力強。
+        """)
+        st.markdown(f"""
+        | 評分項目 | 條件區間 | 分數 | 💡 策略原理解析 |
+        | :--- | :--- | :--- | :--- |
+        | **CB 市價** | `< {config['risk_price_safe']} 元` | **+1** | **【絕對債底】** 接近票面價 100 元，下檔有限，卻擁有股票看漲期權。 |
+        | | `{config['risk_price_safe']} ~ {config['risk_price_mid']} 元` | **+3** | **【安全氣囊】** 雖然稍微漲上來，但距離百元保本價不遠，心態可穩健。 |
+        | | `{config['risk_price_mid']} ~ {config['risk_price_high']} 元` | **+6** | **【股性增強】** 價格已脫離債底，此時波動會與股票同步，抗跌性變弱。 |
+        | | `> {config['risk_price_high']} 元` | **+9** | **【風險懲罰】** 價格過高，這時買 CB 跟買股票風險一樣大，卻少了股息，**毫無優勢，禁止追價**。 |
+        | **溢價率** | `< 0%` (折價) | **-1** | **【套利空間】** CB 比轉換後的股票還便宜，除了連動性 100%，還有補漲歸零的動力。 |
+        | | `> 20%` | **+5** | **【虛胖阻力】** 溢價太高，股價上漲時 CB 往往不動 (在消化溢價)，資金效率極差。 |
+        """)
+
+    with tab_p:
+        st.markdown(f"""
+        **核心概念：捕捉「發行人心態」與「Gamma 加速」**
+        * 我們希望找到「主力不得不拉抬」或「技術面剛好進入加速區」的時間點。
+        * **P值越高**：代表主力作價的動機越強。
+        """)
+        st.markdown(f"""
+        | 評分項目 | 條件區間 | 分數 | 💡 策略原理解析 |
+        | :--- | :--- | :--- | :--- |
+        | **時機窗** | `上市 {config['pot_golden_min']}~{config['pot_golden_max']} 天` | **+3** | **【作帳黃金期】** 統計上，發行滿一年時公司常有動作 (資產交換/除權息)，易出現異常報酬。 |
+        | **籌碼面** | `未轉餘額 > {config['pot_balance_high']}%` | **+2** | **【籌碼安定】** 餘額高代表主力還沒下車，或發行商尚未開始倒貨，後續才有「拉高出貨」的空間。 |
+        | **甜蜜點** | `轉換價值 {config['pot_parity_min']}~{config['pot_parity_max']}%` | **+3** | **【Gamma 加速區】** 股價剛好在轉換價附近，此時 CB 價格對股價最敏感，隨時可能一根長紅突破。 |
+        | **技術面** | `站上 87MA` | **+2** | **【主力成本線】** 87MA 常被視為中線主力成本，站上代表多頭趨勢確立。 |
+        | **成交量** | `殭屍量 (<{config['pot_vol_zombie']}張)` | **-3** | **【流動性風險】** 沒量的股票，主力想拉也拉不動，且易產生滑價損失，應避開。 |
+        """)
+
+if candidates.empty:
+    st.warning("⚠️ 篩選無結果，請放寬側邊欄條件。")
+    st.stop()
+
+# ==========================================
+# 🔄 工作流
+# ==========================================
+tab1, tab2 = st.tabs(["🏆 Step 1: 戰情總覽與 AI 掃描", "🚀 Step 2: 單檔深度戰情"])
+
+with tab1:
+    st.write(f"篩選出 **{len(candidates)}** 檔標的。")
+    st.dataframe(
+        candidates[['代號', '名稱', '策略標籤', 'R值', 'P值', 'CB市價', '溢/折價', '轉換價值', '餘額']],
+        column_config={
+            "R值": st.column_config.ProgressColumn("Risk", min_value=0, max_value=10, format="%d"),
+            "P值": st.column_config.ProgressColumn("Potential", min_value=0, max_value=10, format="%d"),
+            "溢/折價": st.column_config.NumberColumn(format="%.2f%%"),
+            "轉換價值": st.column_config.NumberColumn(format="%.2f%%"),
+            "餘額": st.column_config.NumberColumn(format="%.2f%%"),
+        }, hide_index=True
+    )
+    
+    elite = candidates[(candidates['R值'] <= 5) & (candidates['P值'] >= 5)]
+    st.markdown(f"### 🤖 AI 批量掃描 (精選 {len(elite)} 檔)")
+    
+    if st.button("🚀 啟動 AI 批量簡評"):
+        if elite.empty:
+            st.warning("無符合 R≤5 & P≥5 的標的。")
+        else:
+            results = []
+            bar = st.progress(0)
+            for i, (idx, row) in enumerate(elite.iterrows()):
+                bar.progress((i+1)/len(elite))
+                
+                days_lbl = "黃金期" if row['上市天數'] > config['pot_golden_min'] else "觀察期"
+                
+                # 🔥 v24 Prompt 優化：強調風險、理由與邏輯
+                prompt = f"""
+                # Role: 鄭大 CB 策略操盤手 (風格: 穩健、重視風險報酬比、有憑有據)
+                
+                # Input Data:
+                - 標的: {row['名稱']}({row['代號']})
+                - 評分: Risk={row['R值']} (R高=風險高), Potential={row['P值']} (P高=動能強)
+                - 關鍵數據: 市價{row['CB市價']}, 溢價{row['溢/折價']:.1f}%, 餘額{row['餘額']:.1f}%
+                - 時機: {days_lbl}
+                
+                # Decision Rules (嚴格執行):
+                1. **風險檢核**: 若 R>5 或 溢價>20%，指令必須是【暫時觀望】或【嚴設停損】，並明確指出「追高風險」。
+                2. **價格邏輯**: 若建議買進，必須說明「理由」。(例如：因為「貼近110債底保護」或「低溢價具補漲空間」)。
+                3. **拒絕廢話**: 不要說「建議投資人留意」，直接說「買」或「不買」。
+                
+                # Output Format (擴充至 60 字):
+                請輸出一段約 50-60 字的戰術指令，格式如下：
+                "【指令】操作建議與價位。(理由：針對價格與風險的具體解釋)"
+                
+                # Examples:
+                - "【強力佈局】建議現價 112 元分批建倉。理由：市價貼近 110 債底安全區 (R低)，且處於黃金期，下檔風險極低。"
+                - "【拉回承接】動能雖強但溢價已高 (18%)，現價追高風險大。理由：等待回測 118 元附近消化溢價後再進場較安全。"
+                - "【暫時觀望】P值雖高但市價已達 135 元，肉少湯燙。理由：已脫離舒適區 (R高)，隨時可能回檔，不宜追價。"
+                """
+                
+                comment = ask_gemini(prompt)
+                
+                # 簡單清洗格式
+                clean_comment = comment.replace("\n", " ").replace("**", "")
+                results.append(f"⭐ {row['名稱']} (R{row['R值']}/P{row['P值']})\n{clean_comment}\n")
+                
+                # 延遲 4 秒 (配合 API 限制)
+                time.sleep(4)
+            
+            bar.empty()
+            full_msg = "🏆 鄭大精選掃描報告 (深度指令版) 🏆\n\n" + "\n".join(results)
+            st.text_area("AI 報告預覽", full_msg, height=400) # 高度稍微加大
+            send_line_broadcast(full_msg)
+            st.success("深度指令報告已發送至 LINE！")
+
+with tab2:
+    col1, col2 = st.columns([2,1])
+    target_str = col1.selectbox("選擇標的", candidates['代號'] + " " + candidates['名稱'])
+    manual_date = col2.date_input("校正上市日", value=None)
+    
+    if st.button("啟動全方位戰情分析"):
+        row = candidates[candidates['代號'] == target_str.split()[0]].iloc[0]
+        with st.spinner("正在聯網抓取產業與財報數據..."):
+            tech_detail = get_technical_data(row['股票代號'], fetch_fundamentals=True)
+        
+        fund = tech_detail['fundamentals']
+        ind = tech_detail['indicators']
+        days = row['上市天數']
+        if manual_date: days = (today.date() - manual_date).days
+        
+        prompt = f"""
+# Role: 鄭大 CB 策略首席分析師
+# Task: 綜合量化分數、基本面與技術面，給出深度投資建議。
+
+# 1. 核心量化數據 (R/P Model):
+- **標的**: {row['名稱']} ({row['代號']}) - **{row['策略標籤']}**
+- **R值 (風險)**: {row['R值']} (評分: 價格<{config['risk_price_safe']}加分, 溢價>20扣分)
+- **P值 (潛力)**: {row['P值']} (評分: 籌碼>90%加分, 轉換價值90-110%加分)
+- **時機窗**: 上市 {int(days)} 天
+
+# 2. 籌碼與位置 (關鍵):
+- **轉換價值**: {row['轉換價值']:.2f}% (是否在 90-110 甜蜜點?)
+- **未轉餘額**: {row['餘額']:.2f}% (籌碼是否安定?)
+- **溢價率**: {row['溢/折價']:.2f}%
+
+# 3. 產業與基本面:
+- 產業: {fund.get('sector')} - {fund.get('industry')}
+- 估值: PE {fund.get('pe', 0):.1f}, EPS {fund.get('eps', 0):.2f}, ROE {fund.get('roe', 0)*100:.1f}%
+- 成長: 營收成長 {fund.get('rev_growth', 0)*100:.1f}%
+
+# 4. 技術面詳解:
+- 趨勢: 股價 {row['現股價']:.2f} vs 87MA {row['87MA']:.2f}
+- 動能: 5日均量 {row['均量']} 張
+- 指標: RSI={ind.get('rsi', 0):.1f}
+
+# 5. 鄭大操作指引 (Action):
+請給出最終建議：[操作]: 積極買進 / 分批佈局 / 觀望 / 停利。
+理由需整合：時機窗、甜蜜點位置、籌碼優勢與基本面。
+"""
+        with st.spinner("AI 撰寫中..."):
+            reply = ask_gemini(prompt)
+            st.markdown(reply)
+            send_line_broadcast(f"🔥 {row['名稱']} 全方位報告\n\n{reply}")

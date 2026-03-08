@@ -1,0 +1,13 @@
+streamlit
+pandas
+yfinance
+ta
+selenium
+webdriver-manager
+python-dotenv
+google-genai
+openpyxl
+requests
+graphviz
+urllib3
+lxml
