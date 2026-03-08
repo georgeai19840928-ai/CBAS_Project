@@ -1,0 +1,8 @@
+[build]
+install = "apt-get update && apt-get install -y chromium chromium-driver && pip install -r requirements.txt"
+
+[deployment]
+environment = { }
+
+[deployment.port]
+port = 8501
