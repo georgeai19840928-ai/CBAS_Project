@@ -33,6 +33,36 @@ DEFAULT_CONFIG = {
     "filter_vol_min": 1000
 }
 
+STRATEGY_PRESETS = {
+    "保守 (Conservative)": {
+        "filter_price_min": 100, "filter_price_max": 110,
+        "filter_prem_min": -5, "filter_prem_max": 5,
+        "filter_ratio_min": 90,
+        "filter_parity_min": 95, "filter_parity_max": 105,
+        "filter_vol_min": 500,
+        "risk_price_safe": 105, "risk_price_mid": 115, "risk_price_high": 125,
+        "risk_prem_safe": 5, "risk_prem_high": 10
+    },
+    "標準 (Standard)": {
+        "filter_price_min": 110, "filter_price_max": 120,
+        "filter_prem_min": 5, "filter_prem_max": 15,
+        "filter_ratio_min": 90,
+        "filter_parity_min": 90, "filter_parity_max": 110,
+        "filter_vol_min": 1000,
+        "risk_price_safe": 110, "risk_price_mid": 120, "risk_price_high": 130,
+        "risk_prem_safe": 10, "risk_prem_high": 20
+    },
+    "激進 (Aggressive)": {
+        "filter_price_min": 120, "filter_price_max": 150,
+        "filter_prem_min": 15, "filter_prem_max": 30,
+        "filter_ratio_min": 80,
+        "filter_parity_min": 80, "filter_parity_max": 120,
+        "filter_vol_min": 2000,
+        "risk_price_safe": 120, "risk_price_mid": 135, "risk_price_high": 150,
+        "risk_prem_safe": 20, "risk_prem_high": 35
+    }
+}
+
 class ConfigManager:
     @staticmethod
     def load():

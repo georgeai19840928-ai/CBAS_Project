@@ -11,3 +11,5 @@ requests
 graphviz
 urllib3
 lxml
+html5lib
+beautifulsoup4

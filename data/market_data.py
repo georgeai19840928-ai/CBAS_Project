@@ -2,9 +2,9 @@ import yfinance as yf
 import ta
 import pandas as pd
 import streamlit as st
+import concurrent.futures
 
-@st.cache_data(ttl=3600)
-def get_technical_data(stock_code, fetch_fundamentals=False):
+def _fetch_single(stock_code, fetch_fundamentals=False):
     suffixes = ['.TW', '.TWO']
     for suffix in suffixes:
         try:
@@ -43,3 +43,24 @@ def get_technical_data(stock_code, fetch_fundamentals=False):
             return data
         except: continue
     return None
+
+@st.cache_data(ttl=3600)
+def get_bulk_technical_data(stock_codes, fetch_fundamentals=False):
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        future_to_code = {
+            executor.submit(_fetch_single, code, fetch_fundamentals): code 
+            for code in set(stock_codes)
+        }
+        for future in concurrent.futures.as_completed(future_to_code):
+            code = future_to_code[future]
+            try:
+                data = future.result()
+                results[code] = data
+            except Exception:
+                results[code] = None
+    return results
+
+@st.cache_data(ttl=3600)
+def get_technical_data(stock_code, fetch_fundamentals=False):
+    return _fetch_single(stock_code, fetch_fundamentals)

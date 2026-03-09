@@ -10,10 +10,10 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 # 模組匯入
-from config.settings import ConfigManager
+from config.settings import ConfigManager, STRATEGY_PRESETS
 from core.analyzer import RPAnalyzer
 from data.crawler import fetch_tpex_with_selenium
-from data.market_data import get_technical_data
+from data.market_data import get_technical_data, get_bulk_technical_data
 from services.ai_agent import AIAgent
 from services.notification import send_line_broadcast
 from ui.system_guide import render_guide
@@ -47,7 +47,7 @@ st.divider()
 # ==========================================
 st.sidebar.header("📂 資料來源")
 uploaded = st.sidebar.file_uploader("上傳 Excel", type=['xlsx'])
-path = uploaded if uploaded else r'G:\我的雲端硬碟\n8n_project_cbas\CBAS報價表20260202.xlsx' 
+path = uploaded 
 
 # 強制重抓按鈕
 st.sidebar.markdown("---")
@@ -59,7 +59,23 @@ if st.sidebar.button("🔄 強制重跑爬蟲 (清除快取)", type="primary"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.header("🔍 篩選濾網 (可儲存)")
+st.sidebar.header("🎯 策略快速套用 (Presets)")
+col1, col2, col3 = st.sidebar.columns(3)
+if col1.button("🛡️ 保守"):
+    config.update(STRATEGY_PRESETS["保守 (Conservative)"])
+    ConfigManager.save(config)
+    st.rerun()
+if col2.button("⚖️ 標準"):
+    config.update(STRATEGY_PRESETS["標準 (Standard)"])
+    ConfigManager.save(config)
+    st.rerun()
+if col3.button("🔥 激進"):
+    config.update(STRATEGY_PRESETS["激進 (Aggressive)"])
+    ConfigManager.save(config)
+    st.rerun()
+
+st.sidebar.markdown("---")
+st.sidebar.header("🔍 手動篩選濾網 (可儲存)")
 price_range = st.sidebar.slider("1. CB 市價", 80, 200, 
                                 (config.get('filter_price_min', 110), config.get('filter_price_max', 120)))
 prem_range = st.sidebar.slider("2. 溢價率", -10, 50, 
@@ -126,8 +142,9 @@ tpex_data = st.session_state.tpex_data_cache
 
 candidates = pd.DataFrame()
 
-if not os.path.exists(path) and not uploaded:
-    st.error(f"⚠️ 找不到資料來源檔案，請打開左側欄上傳 Excel。")
+if not path:
+    st.info("👋 請於左上方「資料來源」區塊，手動上傳 CBAS 報價表 Excel 檔案以開始分析。")
+    st.stop()
 else:
     try:
         df = pd.read_excel(path, header=6, engine='openpyxl')
@@ -174,12 +191,15 @@ else:
 
         final_results = []
         if not candidates_pre.empty:
-            with st.spinner("📊 正在聯網抓取技術面、基本面數據並計算 R/P 分數..."):
+            with st.spinner("📊 正在聯網批次抓取技術面、基本面數據..."):
+                unique_codes = candidates_pre['股票代號'].unique().tolist()
+                bulk_tech_data = get_bulk_technical_data(unique_codes, fetch_fundamentals=True)
+                
                 progress_bar = st.progress(0)
                 for i, (idx, row) in enumerate(candidates_pre.iterrows()):
                     progress_bar.progress((i + 1) / len(candidates_pre))
                     
-                    tech = get_technical_data(row['股票代號'], fetch_fundamentals=True)
+                    tech = bulk_tech_data.get(row['股票代號'])
                     if tech and tech['vol_avg_sheets'] < min_vol_avg: continue
                     
                     r, p, lbl, gold = RPAnalyzer.calculate_score(row, tech, row['上市天數'], config)
@@ -260,38 +280,34 @@ else:
             if elite.empty:
                 st.warning("無符合 R≤5 & P≥5 的標的。")
             else:
-                results = []
-                bar = st.progress(0)
-                for i, (idx, row) in enumerate(elite.iterrows()):
-                    bar.progress((i+1)/len(elite))
+                with st.spinner("🚀 AI 批量分析進行中 (預計 5-10 秒)..."):
+                    # 組合所有標的資訊
+                    targets_info = ""
+                    for i, (idx, row) in enumerate(elite.iterrows()):
+                        days_lbl = row['黃金期']
+                        targets_info += f"[{i+1}] 標的: {row['名稱']}({row['代號']}) | Risk: {row['R值']} | Potential: {row['P值']} | 市價: {row['CB市價']} | 溢價: {row['溢/折價']:.1f}% | 狀態: {days_lbl}\n"
                     
-                    # 狀態文字描述
-                    days_lbl = row['黃金期']
-                    
-                    # 🔥 [V1.6 修正] Prompt: 低溢價 = 好事
                     prompt = f"""
                     # Role: 鄭大 CB 策略操盤手 (風格: 果斷、犀利)
                     
-                    # Input:
-                    - 標的: {row['名稱']}({row['代號']})
-                    - 評分: Risk={row['R值']} (越低越好), Potential={row['P值']} (越高越好)
-                    - 關鍵: 市價{row['CB市價']}, 溢價{row['溢/折價']:.1f}% (低溢價具補漲優勢), 狀態{days_lbl}
+                    # Input Data (多檔標的):
+                    {targets_info}
                     
                     # Rules:
-                    1. **買進訊號**: 若 R<=5 且 溢價<20%，視為「優質買點」，請給出【強力佈局】或【分批買進】。
+                    1. **買進訊號**: 若 Risk<=5 且 溢價<20%，視為「優質買點」，請給出【強力佈局】或【分批買進】。
                     2. **理由**: 強調低溢價的優勢，禁止因溢價未達 20% 而觀望。
-                    3. **風險**: 僅在 R>5 或 溢價>20% 時才建議【觀望】。
+                    3. **風險**: 僅在 Risk>5 或 溢價>20% 時才建議【觀望】。
                     
-                    # Output: 50字指令 "【指令】操作建議。(理由...)"
+                    # Output Format:
+                    請為每一檔標的輸出大約 50 字的建議，格式如下：
+                    ⭐ [名稱] (R[Risk值]/P[Potential值])
+                    【指令】操作建議。(理由...)
                     """
                     
-                    comment = st.session_state.ai_agent.ask(prompt)
-                    clean_comment = comment.replace("\n", " ").replace("**", "")
-                    results.append(f"⭐ {row['名稱']} (R{row['R值']}/P{row['P值']})\n{clean_comment}\n")
-                    time.sleep(4)
-                
-                bar.empty()
-                full_msg = "🏆 鄭大精選掃描報告 (深度指令版) 🏆\n\n" + "\n".join(results)
+                    long_comment = st.session_state.ai_agent.ask(prompt)
+                    clean_comment = long_comment.replace("**", "")
+                    
+                full_msg = "🏆 鄭大精選掃描報告 (深度指令版) 🏆\n\n" + clean_comment
                 st.text_area("AI 報告預覽", full_msg, height=400)
                 send_line_broadcast(os.getenv("LINE_ACCESS_TOKEN"), full_msg)
                 st.success("深度指令報告已發送至 LINE！")

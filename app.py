@@ -185,7 +185,7 @@ def ask_gemini(prompt):
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
-                model="gemini-2.0-flash-lite-001", 
+                model="gemini-2.5-flash", 
                 contents=prompt
             )
             return response.text
@@ -205,84 +205,8 @@ def ask_gemini(prompt):
             else:
                 return f"AI Error: {error_str}"
 
-@st.cache_data(ttl=3600)
-def get_technical_data(stock_code, fetch_fundamentals=False):
-    suffixes = ['.TW', '.TWO']
-    for suffix in suffixes:
-        try:
-            ticker = f"{stock_code}{suffix}"
-            stock = yf.Ticker(ticker)
-            df = stock.history(period="2y")
-            if df.empty: continue 
-            
-            curr_p = df['Close'].iloc[-1]
-            curr_v = df['Volume'].iloc[-1] / 1000
-            df['60MA'] = df['Close'].rolling(60).mean()
-            df['87MA'] = df['Close'].rolling(87).mean()
-            df['284MA'] = df['Close'].rolling(284).mean()
-            h10 = df['Close'].rolling(10).max().iloc[-1]
-            v_avg = df['Volume'].rolling(5).mean().iloc[-1] / 1000 if df['Volume'].rolling(5).mean().iloc[-1] > 0 else 0
-
-            data = {
-                "ticker": ticker, "price": curr_p, "ma60": df['60MA'].iloc[-1],
-                "ma87": df['87MA'].iloc[-1], "ma284": df['284MA'].iloc[-1],
-                "is_10d_high": curr_p >= h10, "vol_avg_sheets": v_avg, "current_vol": curr_v,
-                "fundamentals": {}, "indicators": {}
-            }
-
-            if fetch_fundamentals:
-                info = stock.info
-                data['fundamentals'] = {
-                    'sector': info.get('sector', '未知'), 'industry': info.get('industry', '未知'),
-                    'pe': info.get('trailingPE', 0), 'eps': info.get('trailingEps', 0),
-                    'roe': info.get('returnOnEquity', 0), 'rev_growth': info.get('revenueGrowth', 0)
-                }
-                rsi = ta.momentum.RSIIndicator(close=df['Close'], window=14)
-                data['indicators']['rsi'] = rsi.rsi().iloc[-1]
-                macd = ta.trend.MACD(close=df['Close'])
-                data['indicators']['macd_hist'] = macd.macd_diff().iloc[-1]
-
-            return data
-        except: continue
-    return None
-
-@st.cache_data(ttl=86400)
-def fetch_tpex_with_selenium():
-    issuer_map = {}
-    try:
-        chrome_options = Options()
-        chrome_options.add_argument("--headless") 
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        #最近上櫃轉(交)換公司債#
-        driver.get("https://www.tpex.org.tw/zh-tw/bond/issue/cbond/listed.html")
-        time.sleep(3)
-        html = driver.page_source
-        driver.quit()
-        
-        dfs = pd.read_html(html)
-        if not dfs: return {}
-        df_table = dfs[0]
-        
-        col_c = next((c for c in df_table.columns if '代碼' in str(c)), None)
-        col_d = next((c for c in df_table.columns if '日期' in str(c)), None)
-        col_n = next((c for c in df_table.columns if '名稱' in str(c)), None)
-            
-        if col_c and col_d:
-            for _, row in df_table.iterrows():
-                try:
-                    c, n, d = str(row[col_c]).strip(), str(row[col_n]).strip() if col_n else "", str(row[col_d]).strip()
-                    if '/' in d:
-                        p = d.split('/')
-                        fd = f"{int(p[0])+1911}-{p[1]}-{p[2]}"
-                        if c not in issuer_map: issuer_map[c] = []
-                        issuer_map[c].append({'full_name': n, 'date': fd})
-                except: continue
-        return issuer_map
-    except: return {}
+from data.market_data import get_technical_data, get_bulk_technical_data
+from data.crawler import fetch_tpex_with_selenium
 
 def parse_pasted_text(raw_text):
     parsed = {}
@@ -304,10 +228,10 @@ st.title("💎 CBAS 鄭大戰情室 (完整系統版)")
 # --- 側邊欄 ---
 st.sidebar.header("📂 資料設定")
 uploaded = st.sidebar.file_uploader("上傳 Excel", type=['xlsx'])
-path = uploaded if uploaded else r'G:\我的雲端硬碟\n8n_project_cbas\CBAS報價表20260126.xlsx' 
+path = uploaded
 
-if not os.path.exists(path) and not uploaded:
-    st.error(f"找不到檔案: {path}")
+if not path:
+    st.info("👋 請於左上方手動上傳 Excel 檔案以開始分析。")
     st.stop()
 
 if 'tpex_data_cache' not in st.session_state:
@@ -409,9 +333,12 @@ candidates_pre = df[mask].copy()
 
 final_results = []
 if not candidates_pre.empty:
-    with st.spinner("正在進行 R/P 量化評分..."):
+    with st.spinner("🚀 正在聯網批次抓取技術面、基本面數據並進行 R/P 量化評分..."):
+        unique_codes = candidates_pre['股票代號'].unique().tolist()
+        bulk_tech_data = get_bulk_technical_data(unique_codes)
+
         for _, row in candidates_pre.iterrows():
-            tech = get_technical_data(row['股票代號'])
+            tech = bulk_tech_data.get(row['股票代號'])
             if tech and tech['vol_avg_sheets'] < min_vol_avg: continue
             
             r, p, lbl, gold = calculate_rp_strategy(row, tech, row['上市天數'], config)
@@ -574,49 +501,33 @@ with tab1:
         if elite.empty:
             st.warning("無符合 R≤5 & P≥5 的標的。")
         else:
-            results = []
-            bar = st.progress(0)
+            targets_info = ""
             for i, (idx, row) in enumerate(elite.iterrows()):
-                bar.progress((i+1)/len(elite))
-                
                 days_lbl = "黃金期" if row['上市天數'] > config['pot_golden_min'] else "觀察期"
+                targets_info += f"[{i+1}] 標的: {row['名稱']}({row['代號']}) | Risk: {row['R值']} | Potential: {row['P值']} | 市價: {row['CB市價']} | 溢價: {row['溢/折價']:.1f}% | 狀態: {days_lbl}\n"
                 
-                # 🔥 v24 Prompt 優化：強調風險、理由與邏輯
-                prompt = f"""
-                # Role: 鄭大 CB 策略操盤手 (風格: 穩健、重視風險報酬比、有憑有據)
-                
-                # Input Data:
-                - 標的: {row['名稱']}({row['代號']})
-                - 評分: Risk={row['R值']} (R高=風險高), Potential={row['P值']} (P高=動能強)
-                - 關鍵數據: 市價{row['CB市價']}, 溢價{row['溢/折價']:.1f}%, 餘額{row['餘額']:.1f}%
-                - 時機: {days_lbl}
-                
-                # Decision Rules (嚴格執行):
-                1. **風險檢核**: 若 R>5 或 溢價>20%，指令必須是【暫時觀望】或【嚴設停損】，並明確指出「追高風險」。
-                2. **價格邏輯**: 若建議買進，必須說明「理由」。(例如：因為「貼近110債底保護」或「低溢價具補漲空間」)。
-                3. **拒絕廢話**: 不要說「建議投資人留意」，直接說「買」或「不買」。
-                
-                # Output Format (擴充至 60 字):
-                請輸出一段約 50-60 字的戰術指令，格式如下：
-                "【指令】操作建議與價位。(理由：針對價格與風險的具體解釋)"
-                
-                # Examples:
-                - "【強力佈局】建議現價 112 元分批建倉。理由：市價貼近 110 債底安全區 (R低)，且處於黃金期，下檔風險極低。"
-                - "【拉回承接】動能雖強但溢價已高 (18%)，現價追高風險大。理由：等待回測 118 元附近消化溢價後再進場較安全。"
-                - "【暫時觀望】P值雖高但市價已達 135 元，肉少湯燙。理由：已脫離舒適區 (R高)，隨時可能回檔，不宜追價。"
-                """
-                
-                comment = ask_gemini(prompt)
-                
-                # 簡單清洗格式
-                clean_comment = comment.replace("\n", " ").replace("**", "")
-                results.append(f"⭐ {row['名稱']} (R{row['R值']}/P{row['P值']})\n{clean_comment}\n")
-                
-                # 延遲 4 秒 (配合 API 限制)
-                time.sleep(4)
+            prompt = f"""
+            # Role: 鄭大 CB 策略操盤手 (風格: 穩健、重視風險報酬比、有憑有據)
             
-            bar.empty()
-            full_msg = "🏆 鄭大精選掃描報告 (深度指令版) 🏆\n\n" + "\n".join(results)
+            # Input Data (多檔標的):
+            {targets_info}
+            
+            # Decision Rules (嚴格執行):
+            1. **風險檢核**: 若 Risk>5 或 溢價>20%，指令必須是【暫時觀望】或【嚴設停損】，並明確指出「追高風險」。
+            2. **價格邏輯**: 若建議買進，必須說明「理由」。(例如：因為「貼近110債底保護」或「低溢價具補漲空間」)。
+            3. **拒絕廢話**: 不要說「建議投資人留意」，直接說「買」或「不買」。
+            
+            # Output Format (每檔約 50-60 字):
+            請為每一檔標的輸出建議，格式如下：
+            ⭐ [名稱] (R[Risk值]/P[Potential值])
+            【指令】操作建議與價位。(理由：針對價格與風險的具體解釋)
+            """
+            
+            with st.spinner("🚀 AI 批量分析進行中..."):
+                comment = ask_gemini(prompt)
+                clean_comment = comment.replace("**", "")
+                
+            full_msg = "🏆 鄭大精選掃描報告 (深度指令版) 🏆\n\n" + clean_comment
             st.text_area("AI 報告預覽", full_msg, height=400) # 高度稍微加大
             send_line_broadcast(full_msg)
             st.success("深度指令報告已發送至 LINE！")

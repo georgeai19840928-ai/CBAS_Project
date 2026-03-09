@@ -1,0 +1,19 @@
+# Environment variables
+.env
+
+# Python virtual environment and cache
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDEs
+.vscode/
+.idea/
+
+# Streamlit logs
+*.log
+
+# User uploaded data files
+*.xlsx
+~$*.xlsx
