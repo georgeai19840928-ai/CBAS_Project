@@ -241,13 +241,13 @@ else:
                         'R值': r, 'P值': p, '策略標籤': lbl,
                         '黃金期': gp_status, 
                         '上市日期': row['上市日_顯示'],
-                        '母股價': tech['price'] if tech else 0,
-                        '均量': int(tech['vol_avg_sheets']) if tech else 0,
-                        '60MA': round(tech['ma60'], 2) if tech else 0,
-                        '87MA': round(tech['ma87'], 2) if tech else 0,
-                        'MA狀態': '站上' if tech and tech['price'] > tech['ma87'] else '跌破',
-                        'EPS': tech['fundamentals'].get('eps', 0) if tech else 0,
-                        'PE': round(tech['fundamentals'].get('pe', 0), 1) if tech else 0
+                        '母股價': tech['price'] if tech and tech.get('price') else None,
+                        '均量': int(tech['vol_avg_sheets']) if tech else None,
+                        '60MA': round(tech['ma60'], 2) if tech and tech.get('ma60') else None,
+                        '87MA': round(tech['ma87'], 2) if tech and tech.get('ma87') else None,
+                        'MA狀態': '站上' if tech and tech.get('price', 0) > tech.get('ma87', 9999) else ('無資料' if not tech else '跌破'),
+                        'EPS': tech['fundamentals'].get('eps', None) if tech and 'fundamentals' in tech else None,
+                        'PE': round(tech['fundamentals'].get('pe'), 1) if tech and 'fundamentals' in tech and tech['fundamentals'].get('pe') is not None else None
                     })
                     final_results.append(res)
                 progress_bar.empty()
@@ -357,12 +357,12 @@ else:
 - 餘額: {row['餘額']:.2f}%
 
 # 3. 基本面:
-- 產業: {fund.get('sector')}
-- EPS: {fund.get('eps', 0):.2f}, PE: {fund.get('pe', 0):.1f}
+- 產業: {fund.get('sector', '未知')}
+- EPS: {fund.get('eps', '無資料 (YF未提供)')}, PE: {fund.get('pe', '無資料')}
 
 # 4. 技術面:
-- 母股價: {row['母股價']:.2f} vs 87MA: {row['87MA']:.2f}
-- RSI: {ind.get('rsi', 0):.1f}
+- 母股價: {row['母股價'] if pd.notna(row['母股價']) else '無資料'} vs 87MA: {row['87MA'] if pd.notna(row['87MA']) else '無資料'}
+- RSI: {ind.get('rsi', '無資料')}
 
 # 5. 操作指引:
 請給出明確買賣建議與理由。
