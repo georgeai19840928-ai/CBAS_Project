@@ -45,17 +45,13 @@ st.divider()
 # ==========================================
 # ⚙️ 側邊欄設定
 # ==========================================
-st.sidebar.header("📂 資料來源")
-uploaded = st.sidebar.file_uploader("上傳 Excel", type=['xlsx'])
-path = uploaded 
+st.sidebar.header("📂 系統狀態")
+st.sidebar.success("✅ 100% 全自動即時報價連線中 (免上傳 Excel)")
 
-# 強制重抓按鈕
 st.sidebar.markdown("---")
 st.sidebar.subheader("🛠️ 系統維護")
-if st.sidebar.button("🔄 強制重跑爬蟲 (清除快取)", type="primary"):
+if st.sidebar.button("🔄 強制重新整理報價 (清除快取)", type="primary"):
     st.cache_data.clear()
-    if 'tpex_data_cache' in st.session_state:
-        del st.session_state['tpex_data_cache']
     st.rerun()
 
 st.sidebar.markdown("---")
@@ -129,51 +125,80 @@ with st.sidebar.expander("⚙️ 專家評分參數", expanded=False):
 # ==========================================
 # 🔢 背景資料處理
 # ==========================================
-# (已移除 TPEX 爬蟲，因 Cloudflare 防護，改完全依賴 Excel 的上市天數)
-tpex_data = {}
+
+import requests
+from io import BytesIO
+
+@st.cache_data(ttl=3600)
+def get_cbas_live_data():
+    url = 'https://cbas16889.pscnet.com.tw/api/MiDownloadExcel/GetExcel_IssuedCB'
+    headers = {
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': 'Mozilla/5.0'
+    }
+    try:
+        res = requests.get(url, headers=headers, verify=False, timeout=15)
+        if res.status_code == 200:
+            df_api = pd.read_excel(BytesIO(res.content))
+            
+            col_map = {
+                '債券代號': '代號',
+                '標的債券': '名稱',
+                '可轉債市價': 'CB市價',
+                '溢(折)價率': '溢/折價',
+                '流通餘額(張數)': '餘額',
+                '轉換價值': '轉換價值',
+                'TCRI': 'TCRI',
+                '最新賣回日': '賣回日',
+                '發行日期': '上市日'
+            }
+            df_api = df_api.rename(columns=col_map)
+            
+            if '代號' in df_api.columns:
+                df_api['代號'] = df_api['代號'].astype(str).str.replace(' ', '')
+                df_api = df_api[df_api['代號'].notna() & (df_api['代號'] != 'nan') & (df_api['代號'] != '')]
+                df_api['股票代號'] = df_api['代號'].apply(lambda x: x[:4])
+            
+            for c in ['CB市價', '溢/折價', '餘額', '轉換價值', 'TCRI']:
+                if c in df_api.columns: 
+                    df_api[c] = pd.to_numeric(df_api[c], errors='coerce')
+            
+            for c in ['轉換價值', '溢/折價', '餘額']:
+                if c in df_api.columns and df_api[c].median() < 10: 
+                    df_api[c] *= 100
+            
+            today = datetime.now()
+            for c in ['賣回日', '上市日']:
+                if c in df_api.columns: 
+                    df_api[c] = pd.to_datetime(df_api[c], errors='coerce')
+                    if c == '賣回日': 
+                        df_api['距離賣回日(天)'] = (df_api[c] - today).dt.days
+                    if c == '上市日': 
+                        df_api['上市天數'] = (today - df_api[c]).dt.days.apply(lambda x: max(0, int(x)) if pd.notna(x) else 0)
+                        
+            if '距離賣回日(天)' not in df_api.columns:
+                df_api['距離賣回日(天)'] = 9999
+                
+            if '上市日' in df_api.columns:
+                df_api['上市日_顯示'] = df_api['上市日'].dt.strftime('%Y-%m-%d').fillna('未知')
+            else:
+                df_api['上市日_顯示'] = '未知'
+                
+            return df_api
+    except Exception as e:
+        print(f"CBAS API Error: {e}")
+    return pd.DataFrame()
 
 candidates = pd.DataFrame()
 
-if not path:
-    st.info("👋 請於左上方「資料來源」區塊，手動上傳 CBAS 報價表 Excel 檔案以開始分析。")
+with st.spinner("🔄 正在從官方金庫同步最新可轉債即時報價..."):
+    df = get_cbas_live_data()
+
+if df.empty:
+    st.error("⚠️ 無法從官方 API 取得資料，請稍後重試。")
     st.stop()
 else:
     try:
-        df = pd.read_excel(path, header=6, engine='openpyxl')
-        if '代號' in df.columns:
-            df['代號'] = df['代號'].astype(str).str.replace(' ', '')
-            df = df[df['代號'].notna()]
-            df['股票代號'] = df['代號'].apply(lambda x: x[:4])
-        
-        for c in ['CB市價', '溢/折價', '餘額', '轉換價值', 'TCRI']:
-            if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce')
-        for c in ['轉換價值', '溢/折價', '餘額']:
-            if c in df.columns and df[c].median() < 10: df[c] *= 100
-            
-        today = datetime.now()
-        
-        def patch_days(row):
-            if '上市天數' in row and row['上市天數'] > 0: return row['上市天數']
-            c4 = str(row['代號'])[:4]
-            if tpex_data and c4 in tpex_data: 
-                return (today - pd.to_datetime(tpex_data[c4][0]['date'])).days
-            return 0
-        
-        def get_listing_date_str(row):
-            if '上市日' in row and pd.notna(row['上市日']): return row['上市日'].strftime('%Y-%m-%d')
-            c4 = str(row['代號'])[:4]
-            if tpex_data and c4 in tpex_data: return tpex_data[c4][0]['date']
-            return "未知"
-        
-        # 嘗試讀取賣回日 (處理不同命名可能)
-        if '賣回日' in df.columns:
-            df['賣回日'] = pd.to_datetime(df['賣回日'], errors='coerce')
-            df['距離賣回日(天)'] = (df['賣回日'] - today).dt.days
-        else:
-            df['距離賣回日(天)'] = 9999
-
-        df['上市天數'] = df.apply(patch_days, axis=1)
-        df['上市日_顯示'] = df.apply(get_listing_date_str, axis=1)
 
         mask = (df['CB市價'].between(price_range[0], price_range[1])) & \
                (df['溢/折價'].between(prem_range[0], prem_range[1])) & \
@@ -236,8 +261,7 @@ else:
 # 🔄 結果顯示 Tabs
 # ==========================================
 if candidates.empty:
-    if os.path.exists(path) or uploaded:
-        st.warning("⚠️ 篩選無結果，請嘗試放寬側邊欄的篩選條件。")
+    st.warning("⚠️ 篩選無結果，請嘗試放寬側邊欄的篩選條件。")
 else:
     tab1, tab2 = st.tabs(["🏆 戰情總覽 (擴充版)", "🚀 單檔深度戰情"])
 
@@ -317,7 +341,7 @@ else:
             fund = tech_detail['fundamentals']
             ind = tech_detail['indicators']
             days = row['上市天數']
-            if manual_date: days = (today.date() - manual_date).days
+            if manual_date: days = (datetime.now().date() - manual_date).days
             
             prompt = f"""
 # Role: 鄭大 CB 策略首席分析師
