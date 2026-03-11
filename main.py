@@ -338,8 +338,8 @@ else:
             with st.spinner("正在聯網抓取產業與財報數據..."):
                 tech_detail = get_technical_data(row['股票代號'], fetch_fundamentals=True)
             
-            fund = tech_detail['fundamentals']
-            ind = tech_detail['indicators']
+            fund = tech_detail.get('fundamentals', {}) if tech_detail else {}
+            ind = tech_detail.get('indicators', {}) if tech_detail else {}
             days = row['上市天數']
             if manual_date: days = (datetime.now().date() - manual_date).days
             
