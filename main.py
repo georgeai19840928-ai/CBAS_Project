@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 # 模組匯入
 from config.settings import ConfigManager, STRATEGY_PRESETS
 from core.analyzer import RPAnalyzer
-from data.crawler import fetch_tpex_with_selenium
+
 from data.market_data import get_technical_data, get_bulk_technical_data
 from services.ai_agent import AIAgent
 from services.notification import send_line_broadcast
@@ -129,16 +129,8 @@ with st.sidebar.expander("⚙️ 專家評分參數", expanded=False):
 # ==========================================
 # 🔢 背景資料處理
 # ==========================================
-if 'tpex_data_cache' not in st.session_state:
-    with st.spinner("🚀 系統啟動中：正在同步櫃買中心(TPEX)與市場數據..."):
-        data = fetch_tpex_with_selenium()
-        st.session_state.tpex_data_cache = data
-        if not data:
-            st.error("⚠️ 警告：櫃買中心爬蟲未抓到資料，上市日期將顯示為未知。請按側邊欄的「強制重跑」重試。")
-        else:
-            st.toast(f"✅ 成功更新 {len(data)} 筆上市日資料", icon="🎉")
-
-tpex_data = st.session_state.tpex_data_cache
+# (已移除 TPEX 爬蟲，因 Cloudflare 防護，改完全依賴 Excel 的上市天數)
+tpex_data = {}
 
 candidates = pd.DataFrame()
 

@@ -9,60 +9,76 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config.settings import ConfigManager
 from core.analyzer import RPAnalyzer
-from data.crawler import fetch_tpex_with_selenium
 from data.market_data import get_bulk_technical_data
 from services.ai_agent import AIAgent
 from services.notification import send_line_broadcast
 
-def run_daily_job(excel_path):
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 🚀 開始執行 CBAS 每日自動結算腳本...")
+import requests
+from io import BytesIO
+
+def run_daily_job():
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 🚀 開始執行 CBAS 全自動每日結算腳本...")
     
     # 1. 載入環境變數與設定
     load_dotenv()
     config = ConfigManager.load()
     ai_agent = AIAgent(os.getenv("GEMINI_API_KEY"))
     
-    # 2. 爬取 TPEX 上市資料
-    print("⏳ 正在抓取櫃買中心(TPEX)上市資料...")
-    tpex_data = fetch_tpex_with_selenium()
-    if not tpex_data:
-        print("⚠️ 警告：TPEX 爬蟲未能取得資料。")
-        
-    # 3. 讀取 Excel 報價表
-    print(f"📊 正在讀取報價表: {excel_path}...")
+    # 2. 自動擷取官方 API 發行明細表 (免 Excel)
+    print(f"📊 正在從官方金庫同步最新可轉債即時報價...")
+    url = 'https://cbas16889.pscnet.com.tw/api/MiDownloadExcel/GetExcel_IssuedCB'
+    headers = {
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': 'Mozilla/5.0'
+    }
+    
     try:
-        df = pd.read_excel(excel_path, header=6, engine='openpyxl')
+        res = requests.get(url, headers=headers, verify=False, timeout=15)
+        df_api = pd.read_excel(BytesIO(res.content))
+        
+        col_map = {
+            '債券代號': '代號',
+            '標的債券': '名稱',
+            '可轉債市價': 'CB市價',
+            '溢(折)價率': '溢/折價',
+            '流通餘額(張數)': '餘額',
+            '轉換價值': '轉換價值',
+            'TCRI': 'TCRI',
+            '最新賣回日': '賣回日',
+            '發行日期': '上市日'
+        }
+        df = df_api.rename(columns=col_map)
+        
+        if '代號' in df.columns:
+            df['代號'] = df['代號'].astype(str).str.replace(' ', '')
+            df = df[df['代號'].notna() & (df['代號'] != 'nan') & (df['代號'] != '')]
+            df['股票代號'] = df['代號'].apply(lambda x: x[:4])
+        
+        for c in ['CB市價', '溢/折價', '餘額', '轉換價值', 'TCRI']:
+            if c in df.columns: 
+                df[c] = pd.to_numeric(df[c], errors='coerce')
+        
+        for c in ['轉換價值', '溢/折價', '餘額']:
+            if c in df.columns and df[c].median() < 10: 
+                df[c] *= 100
+        
+        today = datetime.now()
+        for c in ['賣回日', '上市日']:
+            if c in df.columns: 
+                df[c] = pd.to_datetime(df[c], errors='coerce')
+                if c == '賣回日': 
+                    df['距離賣回日(天)'] = (df[c] - today).dt.days
+                if c == '上市日': 
+                    df['上市天數'] = (today - df[c]).dt.days.apply(lambda x: max(0, int(x)) if pd.notna(x) else 0)
+                    
+        # 補上 default 名稱對應，因為 analyzer 預期有名稱欄位
+        if '名稱' not in df.columns and '簡稱' in df.columns:
+            df['名稱'] = df['簡稱']
+            
     except Exception as e:
-        print(f"❌ 讀取 Excel 失敗: {e}")
+        print(f"❌ API 擷取失敗: {e}")
         return
 
-    if '代號' in df.columns:
-        df['代號'] = df['代號'].astype(str).str.replace(' ', '')
-        df = df[df['代號'].notna()]
-        df['股票代號'] = df['代號'].apply(lambda x: x[:4])
-    
-    for c in ['CB市價', '溢/折價', '餘額', '轉換價值', 'TCRI']:
-        if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce')
-    for c in ['轉換價值', '溢/折價', '餘額']:
-        if c in df.columns and df[c].median() < 10: df[c] *= 100
-        
-    today = datetime.now()
-    
-    def patch_days(row):
-        if '上市天數' in row and row['上市天數'] > 0: return row['上市天數']
-        c4 = str(row['代號'])[:4]
-        if tpex_data and c4 in tpex_data: 
-            return (today - pd.to_datetime(tpex_data[c4][0]['date'])).days
-        return 0
-    
-    # 嘗試讀取賣回日
-    if '賣回日' in df.columns:
-        df['賣回日'] = pd.to_datetime(df['賣回日'], errors='coerce')
-        df['距離賣回日(天)'] = (df['賣回日'] - today).dt.days
-    else:
-        df['距離賣回日(天)'] = 9999
-
-    df['上市天數'] = df.apply(patch_days, axis=1)
 
     # 4. 初步篩選 (使用設定檔參數)
     print("🔍 進行條件篩選...")
@@ -120,14 +136,4 @@ def run_daily_job(excel_path):
     print("✅ 每日結算腳本執行完畢！")
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("用法: python cron_job.py <報價表Excel路徑>")
-        # 提供測試備份路徑 (若不輸入參數則嘗試抓取同一目錄下的 demo)
-        default_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CBAS_0310.xlsx")
-        if os.path.exists(default_path):
-            print(f"未指定檔案，預設使用: {default_path}")
-            run_daily_job(default_path)
-        else:
-            sys.exit(1)
-    else:
-        run_daily_job(sys.argv[1])
+    run_daily_job()

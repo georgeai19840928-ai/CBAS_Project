@@ -206,7 +206,6 @@ def ask_gemini(prompt):
                 return f"AI Error: {error_str}"
 
 from data.market_data import get_technical_data, get_bulk_technical_data
-from data.crawler import fetch_tpex_with_selenium
 
 def parse_pasted_text(raw_text):
     parsed = {}
@@ -226,53 +225,70 @@ st.set_page_config(page_title="CBAS 鄭大戰情室 (v23)", layout="wide", page_
 st.title("💎 CBAS 鄭大戰情室 (完整系統版)")
 
 # --- 側邊欄 ---
-st.sidebar.header("📂 資料設定")
-uploaded = st.sidebar.file_uploader("上傳 Excel", type=['xlsx'])
-path = uploaded
+st.sidebar.header("📂 系統狀態")
+st.sidebar.success("✅ 100% 全自動即時報價連線中 (免上傳 Excel)")
 
-if not path:
-    st.info("👋 請於左上方手動上傳 Excel 檔案以開始分析。")
-    st.stop()
+# --- 實作新的 CBAS 下載 API (免爬蟲、無 Cloudflare 阻擋) ---
+@st.cache_data(ttl=3600)
+def get_cbas_live_data():
+    url = 'https://cbas16889.pscnet.com.tw/api/MiDownloadExcel/GetExcel_IssuedCB'
+    headers = {
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+    }
+    try:
+        from io import BytesIO
+        res = requests.get(url, headers=headers, verify=False, timeout=15)
+        if res.status_code == 200:
+            df_api = pd.read_excel(BytesIO(res.content))
+            
+            col_map = {
+                '債券代號': '代號',
+                '標的債券': '簡稱',
+                '可轉債市價': 'CB市價',
+                '溢(折)價率': '溢/折價',
+                '流通餘額(張數)': '餘額',
+                '轉換價值': '轉換價值',
+                'TCRI': 'TCRI',
+                '最新賣回日': '賣回日',
+                '發行日期': '上市日'
+            }
+            df_api = df_api.rename(columns=col_map)
+            
+            if '代號' in df_api.columns:
+                df_api['代號'] = df_api['代號'].astype(str).str.replace(' ', '')
+                df_api = df_api[df_api['代號'].notna() & (df_api['代號'] != 'nan') & (df_api['代號'] != '')]
+                df_api['股票代號'] = df_api['代號'].apply(lambda x: x[:4])
+            
+            for c in ['CB市價', '溢/折價', '餘額', '轉換價值', 'TCRI']:
+                if c in df_api.columns: 
+                    df_api[c] = pd.to_numeric(df_api[c], errors='coerce')
+            
+            # 修正某些欄位如果單位過小的情形 (如 API 給小數)
+            for c in ['轉換價值', '溢/折價', '餘額']:
+                if c in df_api.columns and df_api[c].median() < 10: 
+                    df_api[c] *= 100
+            
+            for c in ['賣回日', '上市日']:
+                if c in df_api.columns: 
+                    df_api[c] = pd.to_datetime(df_api[c], errors='coerce')
+                    if c == '賣回日': 
+                        df_api['距離賣回日(天)'] = (df_api[c] - today).dt.days
+                    if c == '上市日': 
+                        df_api['上市天數'] = (today - df_api[c]).dt.days.apply(lambda x: max(0, int(x)) if pd.notna(x) else 0)
+            
+            return df_api
+    except Exception as e:
+        logger.error(f"CBAS API Error: {e}")
+    return pd.DataFrame()
 
-if 'tpex_data_cache' not in st.session_state:
-    with st.spinner("🚀 啟動自動化爬蟲..."):
-        st.session_state.tpex_data_cache = fetch_tpex_with_selenium()
-tpex_data = st.session_state.tpex_data_cache
+today = datetime.now()
 
-with st.sidebar.expander("👉 (備用) 手動貼上網頁資料"):
-    pasted_text = st.text_area("若爬蟲失敗，請貼上:", height=100)
-    manual_data = parse_pasted_text(pasted_text)
+with st.spinner("🔄 正在從官方金庫同步最新可轉債即時報價..."):
+    df = get_cbas_live_data()
 
-try:
-    df = pd.read_excel(path, header=6, engine='openpyxl')
-    if '代號' in df.columns:
-        df['代號'] = df['代號'].astype(str).str.replace(' ', '')
-        df = df[df['代號'].notna()]
-        df['股票代號'] = df['代號'].apply(lambda x: x[:4])
-    
-    for c in ['CB市價', '溢/折價', '餘額', '轉換價值', 'TCRI']:
-        if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce')
-    for c in ['轉換價值', '溢/折價', '餘額']:
-        if c in df.columns and df[c].median() < 10: df[c] *= 100
-        
-    today = datetime.now()
-    for c in ['賣回日', '發行日期', '上市日']:
-        if c in df.columns: 
-            df[c] = pd.to_datetime(df[c], errors='coerce')
-            if c == '賣回日': df['距離賣回日(天)'] = (df[c] - today).dt.days
-    
-    def patch_days(row):
-        if '上市天數' in row and row['上市天數'] > 0: return row['上市天數']
-        c4 = str(row['代號'])[:4]
-        if manual_data and c4 in manual_data: return (today - pd.to_datetime(manual_data[c4])).days
-        if tpex_data and c4 in tpex_data: 
-            if tpex_data[c4]: return (today - pd.to_datetime(tpex_data[c4][0]['date'])).days
-        return 0
-    df['上市天數'] = df.apply(patch_days, axis=1)
-    df['上市天數'] = df['上市天數'].fillna(0)
-
-except Exception as e:
-    st.error(f"Excel 讀取失敗: {e}")
+if df.empty:
+    st.error("⚠️ 無法從官方 API 取得資料，請稍後重試。")
     st.stop()
 
 # --- 側邊欄：濾網 ---
