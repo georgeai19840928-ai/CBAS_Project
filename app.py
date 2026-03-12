@@ -42,76 +42,16 @@ if 'gemini_client' not in st.session_state:
 # 💾 參數儲存系統 (Config System)
 # ==========================================
 from config.settings import DEFAULT_CONFIG, STRATEGY_PRESETS, ConfigManager
+from core.analyzer import RPAnalyzer
+
 
 config = ConfigManager.load()
 
 # ==========================================
 # 🛠️ 核心邏輯：R/P 量化評分模型
 # ==========================================
-def calculate_rp_strategy(row, tech_data, listing_days, cfg):
-    price = row['CB市價']
-    premium = row['溢/折價']
-    balance = row['餘額']
-    parity = row['轉換價值']
-    
-    # --- 1. 計算 R 值 (Risk) ---
-    r_score = 0
-    if price < cfg['risk_price_safe']: r_score += 1
-    elif price <= cfg['risk_price_mid']: r_score += 3
-    elif price <= cfg['risk_price_high']: r_score += 6
-    else: r_score += 9 
-    
-    if premium < 0: r_score -= 1
-    elif premium <= cfg['risk_prem_safe']: r_score += 0
-    elif premium <= cfg['risk_prem_high']: r_score += 2 
-    else: r_score += 5
-    r_score = max(0, min(r_score, 10)) 
+# (Redundant function calculate_rp_strategy removed, using RPAnalyzer instead)
 
-    # --- 2. 計算 P 值 (Potential) ---
-    p_score = 2 
-    is_golden_timing = False
-    
-    if cfg['pot_golden_min'] <= listing_days <= cfg['pot_golden_max']: 
-        p_score += 3
-        is_golden_timing = True
-    elif listing_days > 0 and listing_days < 180:
-        p_score -= 2
-    
-    days_to_put = row.get('距離賣回日(天)', 9999)
-    if 0 < days_to_put < 365: 
-        p_score += 3
-        is_golden_timing = True
-
-    if balance >= cfg['pot_balance_high']: p_score += 2
-    elif balance < cfg['pot_balance_low']: p_score -= 3
-
-    if cfg['pot_parity_min'] <= parity <= cfg['pot_parity_max']:
-        p_score += 3 
-    elif parity < 80:
-        p_score -= 1
-
-    if tech_data:
-        current_price = tech_data['price']
-        ma87 = tech_data['ma87']
-        vol_avg = tech_data['vol_avg_sheets']
-        current_vol = tech_data['current_vol']
-
-        if pd.notna(ma87) and current_price > ma87: p_score += 2
-        
-        if vol_avg < cfg['pot_vol_zombie']: p_score -= 3
-        elif vol_avg > cfg['pot_vol_active']: p_score += 1
-        
-        if vol_avg > 0 and current_vol > (vol_avg * 2): p_score += 2
-
-    p_score = max(0, min(p_score, 10))
-
-    label = "中性觀察"
-    if r_score <= 5 and p_score >= 5: label = "💎 鄭大精選"
-    elif r_score <= 5: label = "🛡️ 低險保守"
-    elif p_score >= 7: label = "🚀 強勢動能"
-    else: label = "⚠️ 風險偏高"
-        
-    return r_score, p_score, label, is_golden_timing
 
 # ==========================================
 # 🛠️ 工具函數 (🔥 修正版 AI 呼叫)
@@ -171,7 +111,7 @@ def parse_pasted_text(raw_text):
 # 🚀 主程式 UI 
 # ==========================================
 st.set_page_config(page_title="CBAS 鄭大戰情室 (v23)", layout="wide", page_icon="💎")
-st.title("💎 CBAS 鄭大戰情室 (完整系統版) v2.0.2-Full-Fixed")
+st.title("💎 CBAS 鄭大戰情室 (單一主控版) v2.1.0-Master")
 
 @st.cache_data(ttl=300)
 def get_git_commit():
@@ -334,9 +274,9 @@ if not candidates_pre.empty:
             tech = bulk_tech_data.get(row['股票代號'])
             if tech and tech['vol_avg_sheets'] < min_vol_avg: continue
             
-            # 使用 RPAnalyzer 統一評分邏輯
-            from core.analyzer import RPAnalyzer
+            # 統一評分邏輯
             r, p, lbl, gold = RPAnalyzer.calculate_score(row, tech, row['上市天數'], config)
+
             
             # 🔥 狀態顯示邏輯 (與 main.py 一致)
             listing_days = row['上市天數']
