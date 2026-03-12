@@ -12,6 +12,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 import urllib3
 import io
+import subprocess
 
 
 # 禁用 SSL 警告
@@ -172,6 +173,16 @@ def parse_pasted_text(raw_text):
 # ==========================================
 st.set_page_config(page_title="CBAS 鄭大戰情室 (v23)", layout="wide", page_icon="💎")
 st.title("💎 CBAS 鄭大戰情室 (完整系統版) v2.0.1")
+
+@st.cache_data(ttl=300)
+def get_git_commit():
+    try:
+        commit = subprocess.check_output(['git', 'log', '-1', '--format="%h - %s"']).decode('utf-8').strip().strip('"')
+        return commit
+    except Exception:
+        return "Unknown Version"
+
+st.info(f"📌 **目前系統版本 / 部署狀態:** `{get_git_commit()}`")
 
 # --- 側邊欄 ---
 st.sidebar.header("📂 系統狀態")

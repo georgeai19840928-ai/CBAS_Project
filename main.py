@@ -8,6 +8,7 @@ import pandas as pd
 import time
 from datetime import datetime
 from dotenv import load_dotenv
+import subprocess
 
 # 模組匯入
 from config.settings import ConfigManager, STRATEGY_PRESETS
@@ -35,6 +36,16 @@ if 'ai_agent' not in st.session_state:
     st.session_state.ai_agent = AIAgent(os.getenv("GEMINI_API_KEY"))
 
 st.title("💎 CBAS 鄭大戰情室 (V1.6 狀態優化版) v2.0.1")
+
+@st.cache_data(ttl=300)
+def get_git_commit():
+    try:
+        commit = subprocess.check_output(['git', 'log', '-1', '--format="%h - %s"']).decode('utf-8').strip().strip('"')
+        return commit
+    except Exception:
+        return "Unknown Version"
+
+st.info(f"📌 **目前系統版本 / 部署狀態:** `{get_git_commit()}`")
 
 # ==========================================
 # 📊 優先顯示系統說明書
