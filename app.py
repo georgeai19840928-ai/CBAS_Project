@@ -41,53 +41,9 @@ if 'gemini_client' not in st.session_state:
 # ==========================================
 # 💾 參數儲存系統 (Config System)
 # ==========================================
-CONFIG_FILE = "strategy_config_v23.json"
+from config.settings import DEFAULT_CONFIG, STRATEGY_PRESETS, ConfigManager
 
-DEFAULT_CONFIG = {
-    # --- R 值 (Risk) 參數 ---
-    "risk_price_safe": 110,
-    "risk_price_mid": 120,
-    "risk_price_high": 130,
-    "risk_prem_safe": 10,
-    "risk_prem_mid": 15,
-    "risk_prem_high": 20,
-    
-    # --- P 值 (Potential) 參數 ---
-    "pot_balance_high": 90,
-    "pot_balance_low": 30,
-    "pot_parity_min": 90,
-    "pot_parity_max": 110,
-    "pot_vol_zombie": 500,
-    "pot_vol_active": 2000,
-    "pot_golden_min": 330,
-    "pot_golden_max": 450,
-
-    # --- 濾網預設值 ---
-    "filter_price_min": 110,
-    "filter_price_max": 120,
-    "filter_prem_min": 5,
-    "filter_prem_max": 15,
-    "filter_ratio_min": 90,
-    "filter_parity_min": 90,
-    "filter_parity_max": 110,
-    "filter_vol_min": 1000
-}
-
-def load_config():
-    cfg = DEFAULT_CONFIG.copy()
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                loaded = json.load(f)
-                cfg.update(loaded)
-        except: pass
-    return cfg
-
-def save_config(new_config):
-    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(new_config, f, indent=4)
-
-config = load_config()
+config = ConfigManager.load()
 
 # ==========================================
 # 🛠️ 核心邏輯：R/P 量化評分模型
@@ -221,6 +177,21 @@ st.title("💎 CBAS 鄭大戰情室 (完整系統版) v2.0.1")
 st.sidebar.header("📂 系統狀態")
 st.sidebar.success("✅ 100% 全自動即時報價連線中 (免上傳 Excel)")
 
+st.sidebar.header("🎯 策略快速套用 (Presets)")
+col1, col2, col3 = st.sidebar.columns(3)
+if col1.button("🛡️ 保守"):
+    config.update(STRATEGY_PRESETS["保守 (Conservative)"])
+    ConfigManager.save(config)
+    st.rerun()
+if col2.button("⚖️ 標準"):
+    config.update(STRATEGY_PRESETS["標準 (Standard)"])
+    ConfigManager.save(config)
+    st.rerun()
+if col3.button("🔥 激進"):
+    config.update(STRATEGY_PRESETS["激進 (Aggressive)"])
+    ConfigManager.save(config)
+    st.rerun()
+
 
 
 @st.cache_data(ttl=3600)
@@ -299,7 +270,7 @@ parity_range = st.sidebar.slider("4. 股價靠近轉換價 (%)", 50, 150,
                                  (config.get('filter_parity_min', 90), config.get('filter_parity_max', 110)))
 min_vol_avg = st.sidebar.number_input("5. 五日均量 > (張)", value=config.get('filter_vol_min', 1000), step=100)
 
-if st.sidebar.button("💾 儲存濾網設定"):
+if st.sidebar.button("💾 儲存濾網與評分設定 (Save Config)"):
     config['filter_price_min'] = price_range[0]
     config['filter_price_max'] = price_range[1]
     config['filter_prem_min'] = prem_range[0]
@@ -308,8 +279,8 @@ if st.sidebar.button("💾 儲存濾網設定"):
     config['filter_parity_min'] = parity_range[0]
     config['filter_parity_max'] = parity_range[1]
     config['filter_vol_min'] = min_vol_avg
-    save_config(config)
-    st.sidebar.success("濾網設定已儲存！")
+    ConfigManager.save(config)
+    st.sidebar.success("✅ 設定已儲存成功！下次開啟將自動載入。")
 
 # --- 側邊欄：評分參數 ---
 with st.sidebar.expander("⚙️ 專家評分參數 (Scoring)", expanded=False):
@@ -332,7 +303,7 @@ with st.sidebar.expander("⚙️ 專家評分參數 (Scoring)", expanded=False):
     new_cfg['pot_parity_max'] = c6.number_input("甜蜜點上限", value=config['pot_parity_max'])
     
     if st.button("💾 儲存評分參數"):
-        save_config(new_cfg)
+        ConfigManager.save(new_cfg)
         config = new_cfg
         st.sidebar.success("評分參數已更新！")
 
