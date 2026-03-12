@@ -8,15 +8,18 @@ except ImportError:
 class AIAgent:
     def __init__(self, api_key):
         self.client = None
-        if api_key:
+        self.init_error = None
+        if not api_key:
+            self.init_error = "GEMINI_API_KEY 環境變數未設定或為空值"
+        else:
             try:
                 self.client = genai.Client(api_key=api_key)
-            except Exception:
-                pass
+            except Exception as e:
+                self.init_error = f"Client 初始化失敗: {e}"
 
     def ask(self, prompt, max_retries=3, base_delay=10):
         if not self.client:
-            return "⚠️ API Key Error: Client not initialized"
+            return f"⚠️ API Key Error: Client not initialized. 詳細錯誤: {self.init_error}"
         
         for attempt in range(max_retries):
             try:

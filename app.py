@@ -11,15 +11,8 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 import urllib3
+import io
 
-# === Selenium 模組 ===
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
 # 禁用 SSL 警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -228,7 +221,8 @@ st.title("💎 CBAS 鄭大戰情室 (完整系統版)")
 st.sidebar.header("📂 系統狀態")
 st.sidebar.success("✅ 100% 全自動即時報價連線中 (免上傳 Excel)")
 
-# --- 實作新的 CBAS 下載 API (免爬蟲、無 Cloudflare 阻擋) ---
+
+
 @st.cache_data(ttl=3600)
 def get_cbas_live_data():
     url = 'https://cbas16889.pscnet.com.tw/api/MiDownloadExcel/GetExcel_IssuedCB'
@@ -244,7 +238,7 @@ def get_cbas_live_data():
             
             col_map = {
                 '債券代號': '代號',
-                '標的債券': '簡稱',
+                '標的債券': '名稱',
                 '可轉債市價': 'CB市價',
                 '溢(折)價率': '溢/折價',
                 '流通餘額(張數)': '餘額',
@@ -275,7 +269,7 @@ def get_cbas_live_data():
                     if c == '賣回日': 
                         df_api['距離賣回日(天)'] = (df_api[c] - today).dt.days
                     if c == '上市日': 
-                        df_api['上市天數'] = (today - df_api[c]).dt.days.apply(lambda x: max(0, int(x)) if pd.notna(x) else 0)
+                        df_api['上市天數'] = (today - df_api['上市日']).dt.days.apply(lambda x: max(0, int(x)) if pd.notna(x) else 0)
             
             return df_api
     except Exception as e:
