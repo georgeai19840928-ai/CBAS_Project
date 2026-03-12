@@ -34,7 +34,7 @@ config = ConfigManager.load()
 if 'ai_agent' not in st.session_state:
     st.session_state.ai_agent = AIAgent(os.getenv("GEMINI_API_KEY"))
 
-st.title("💎 CBAS 鄭大戰情室 (V1.6 狀態優化版)")
+st.title("💎 CBAS 鄭大戰情室 (V1.6 狀態優化版) v2.0.1")
 
 # ==========================================
 # 📊 優先顯示系統說明書

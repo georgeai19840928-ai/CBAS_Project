@@ -215,7 +215,7 @@ def parse_pasted_text(raw_text):
 # 🚀 主程式 UI 
 # ==========================================
 st.set_page_config(page_title="CBAS 鄭大戰情室 (v23)", layout="wide", page_icon="💎")
-st.title("💎 CBAS 鄭大戰情室 (完整系統版)")
+st.title("💎 CBAS 鄭大戰情室 (完整系統版) v2.0.1")
 
 # --- 側邊欄 ---
 st.sidebar.header("📂 系統狀態")

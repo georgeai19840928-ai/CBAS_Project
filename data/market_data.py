@@ -57,10 +57,7 @@ def _fetch_single(stock_code, fetch_fundamentals=False, retries=3):
                     data['indicators']['macd_hist'] = float(macd.macd_diff().iloc[-1]) if pd.notna(macd.macd_diff().iloc[-1]) else None
 
                 return data
-            except Exception as e:
-                print(f"Fetch Error [{ticker}]: {e}")
-                import traceback
-                traceback.print_exc()
+            except Exception:
                 if attempt < retries - 1:
                     time.sleep(random.uniform(1.0, 2.0))
                     continue
