@@ -1,6 +1,5 @@
+import streamlit as st
 import pandas as pd
-import ta
-import os
 import ta
 import os
 import requests
