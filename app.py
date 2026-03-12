@@ -241,7 +241,7 @@ def get_cbas_live_data():
                 '標的債券': '名稱',
                 '可轉債市價': 'CB市價',
                 '溢(折)價率': '溢/折價',
-                '流通餘額(張數)': '餘額',
+                '餘額比例': '餘額',
                 '轉換價值': '轉換價值',
                 'TCRI': 'TCRI',
                 '最新賣回日': '賣回日',
@@ -260,8 +260,10 @@ def get_cbas_live_data():
             
             # 修正某些欄位如果單位過小的情形 (如 API 給小數)
             for c in ['轉換價值', '溢/折價', '餘額']:
-                if c in df_api.columns and df_api[c].median() < 10: 
-                    df_api[c] *= 100
+                if c in df_api.columns:
+                    # 如果仍有特別小的小數，則乘100 (防呆)
+                    if df_api[c].median() < 10 and df_api[c].median() > 0: 
+                        df_api[c] *= 100
             
             for c in ['賣回日', '上市日']:
                 if c in df_api.columns: 
@@ -356,10 +358,10 @@ if not candidates_pre.empty:
             res = row.to_dict()
             res.update({
                 'R值': r, 'P值': p, '策略標籤': lbl,
-                '現股價': tech['price'] if tech else 0,
-                '87MA': tech['ma87'] if tech else 0,
-                'MA狀態': '站上' if tech and tech['price'] > tech['ma87'] else '跌破',
-                '均量': int(tech['vol_avg_sheets']) if tech else 0
+                '現股價': float(tech['price']) if tech and tech.get('price') is not None else None,
+                '87MA': float(tech['ma87']) if tech and tech.get('ma87') is not None else None,
+                'MA狀態': '站上' if tech and float(tech.get('price', 0)) > float(tech.get('ma87', 9999)) else '跌破',
+                '均量': int(tech['vol_avg_sheets']) if tech and tech.get('vol_avg_sheets') is not None else None
             })
             final_results.append(res)
 

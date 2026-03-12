@@ -146,7 +146,7 @@ def get_cbas_live_data():
                 '標的債券': '名稱',
                 '可轉債市價': 'CB市價',
                 '溢(折)價率': '溢/折價',
-                '流通餘額(張數)': '餘額',
+                '餘額比例': '餘額',
                 '轉換價值': '轉換價值',
                 'TCRI': 'TCRI',
                 '最新賣回日': '賣回日',
@@ -164,8 +164,10 @@ def get_cbas_live_data():
                     df_api[c] = pd.to_numeric(df_api[c], errors='coerce')
             
             for c in ['轉換價值', '溢/折價', '餘額']:
-                if c in df_api.columns and df_api[c].median() < 10: 
-                    df_api[c] *= 100
+                if c in df_api.columns:
+                    # 如果仍有特別小的小數，則乘100 (防呆)
+                    if df_api[c].median() < 10 and df_api[c].median() > 0: 
+                        df_api[c] *= 100
             
             today = datetime.now()
             for c in ['賣回日', '上市日']:
@@ -241,13 +243,13 @@ else:
                         'R值': r, 'P值': p, '策略標籤': lbl,
                         '黃金期': gp_status, 
                         '上市日期': row['上市日_顯示'],
-                        '母股價': tech['price'] if tech and tech.get('price') else None,
-                        '均量': int(tech['vol_avg_sheets']) if tech else None,
-                        '60MA': round(tech['ma60'], 2) if tech and tech.get('ma60') else None,
-                        '87MA': round(tech['ma87'], 2) if tech and tech.get('ma87') else None,
-                        'MA狀態': '站上' if tech and tech.get('price', 0) > tech.get('ma87', 9999) else ('無資料' if not tech else '跌破'),
-                        'EPS': tech['fundamentals'].get('eps', None) if tech and 'fundamentals' in tech else None,
-                        'PE': round(tech['fundamentals'].get('pe'), 1) if tech and 'fundamentals' in tech and tech['fundamentals'].get('pe') is not None else None
+                        '母股價': float(tech['price']) if tech and tech.get('price') is not None else None,
+                        '均量': int(tech['vol_avg_sheets']) if tech and tech.get('vol_avg_sheets') is not None else None,
+                        '60MA': round(float(tech['ma60']), 2) if tech and tech.get('ma60') is not None else None,
+                        '87MA': round(float(tech['ma87']), 2) if tech and tech.get('ma87') is not None else None,
+                        'MA狀態': '站上' if tech and float(tech.get('price', 0)) > float(tech.get('ma87', 9999)) else ('無資料' if not tech else '跌破'),
+                        'EPS': float(tech['fundamentals'].get('eps')) if tech and 'fundamentals' in tech and tech['fundamentals'].get('eps') is not None else None,
+                        'PE': round(float(tech['fundamentals'].get('pe', 0)), 1) if tech and 'fundamentals' in tech and tech['fundamentals'].get('pe') is not None else None
                     })
                     final_results.append(res)
                 progress_bar.empty()
