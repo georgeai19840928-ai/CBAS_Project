@@ -171,7 +171,7 @@ def parse_pasted_text(raw_text):
 # 🚀 主程式 UI 
 # ==========================================
 st.set_page_config(page_title="CBAS 鄭大戰情室 (v23)", layout="wide", page_icon="💎")
-st.title("💎 CBAS 鄭大戰情室 (完整系統版) v2.0.2-Full")
+st.title("💎 CBAS 鄭大戰情室 (完整系統版) v2.0.2-Full-Fixed")
 
 @st.cache_data(ttl=300)
 def get_git_commit():
@@ -521,7 +521,7 @@ with tab1:
         }, hide_index=True
     )
     
-    elite = candidates[(candidates['R值'] <= 5) & (candidates['P值'] >= 5)]
+    elite = candidates[(candidates['Risk'] <= 5) & (candidates['Potential'] >= 5)]
     st.markdown(f"### 🤖 AI 批量掃描 (精選 {len(elite)} 檔)")
     
     if st.button("🚀 啟動 AI 批量簡評"):
@@ -530,8 +530,8 @@ with tab1:
         else:
             targets_info = ""
             for i, (idx, row) in enumerate(elite.iterrows()):
-                days_lbl = "黃金期" if row['上市天數'] > config['pot_golden_min'] else "觀察期"
-                targets_info += f"[{i+1}] 標的: {row['名稱']}({row['代號']}) | Risk: {row['R值']} | Potential: {row['P值']} | 市價: {row['CB市價']} | 溢價: {row['溢/折價']:.1f}% | 狀態: {days_lbl}\n"
+                days_lbl = row.get('黃金期', '觀察期')
+                targets_info += f"[{i+1}] 標的: {row['名稱']}({row['代號']}) | Risk: {row['Risk']} | Potential: {row['Potential']} | 市價: {row['CB市價']} | 溢價: {row['溢/折價']:.1f}% | 狀態: {days_lbl}\n"
                 
             prompt = f"""
             # Role: 鄭大 CB 策略操盤手 (風格: 穩健、重視風險報酬比、有憑有據)
@@ -580,9 +580,9 @@ with tab2:
 
 # 1. 核心量化數據 (R/P Model):
 - **標的**: {row['名稱']} ({row['代號']}) - **{row['策略標籤']}**
-- **R值 (風險)**: {row['R值']} (評分: 價格<{config['risk_price_safe']}加分, 溢價>20扣分)
-- **P值 (潛力)**: {row['P值']} (評分: 籌碼>90%加分, 轉換價值90-110%加分)
-- **時機窗**: 上市 {int(days)} 天
+- **Risk (風險)**: {row['Risk']} (評分: 價格<{config['risk_price_safe']}加分, 溢價>20扣分)
+- **Potential (潛力)**: {row['Potential']} (評分: 籌碼>90%加分, 轉換價值90-110%加分)
+- **時機窗**: 上市 {int(days)} 天 ({row['黃金期']})
 
 # 2. 籌碼與位置 (關鍵):
 - **轉換價值**: {row['轉換價值']:.2f}% (是否在 90-110 甜蜜點?)
@@ -591,11 +591,11 @@ with tab2:
 
 # 3. 產業與基本面:
 - 產業: {fund.get('sector')} - {fund.get('industry')}
-- 估值: PE {fund.get('pe', 0):.1f}, EPS {fund.get('eps', 0):.2f}, ROE {fund.get('roe', 0)*100:.1f}%
+- 估值: PE {row.get('PE', 0):.1f}, EPS {row.get('EPS', 0):.2f}
 - 成長: 營收成長 {fund.get('rev_growth', 0)*100:.1f}%
 
 # 4. 技術面詳解:
-- 趨勢: 股價 {row['現股價']:.2f} vs 87MA {row['87MA']:.2f}
+- 趨勢: 股價 {row['母股價']:.2f} vs 87MA {row['87MA']:.2f}
 - 動能: 5日均量 {row['均量']} 張
 - 指標: RSI={ind.get('rsi', 0):.1f}
 
