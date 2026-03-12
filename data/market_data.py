@@ -3,13 +3,23 @@ import ta
 import pandas as pd
 import streamlit as st
 import concurrent.futures
+import requests
+
+# Bypassing Yahoo Finance Cloud/Datacenter IP blocks (e.g., on Zeabur)
+session = requests.Session()
+session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+    'Accept': '*/*',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive'
+})
 
 def _fetch_single(stock_code, fetch_fundamentals=False):
     suffixes = ['.TW', '.TWO']
     for suffix in suffixes:
         try:
             ticker = f"{stock_code}{suffix}"
-            stock = yf.Ticker(ticker)
+            stock = yf.Ticker(ticker, session=session)
             df = stock.history(period="2y")
             if df.empty: continue 
             
