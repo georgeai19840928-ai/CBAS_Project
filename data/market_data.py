@@ -60,8 +60,11 @@ def _fetch_single(stock_code, fetch_fundamentals=False, retries=3):
             }
 
             if fetch_fundamentals:
+                # 取得 4 位數母股代號 (例如 24361 -> 2436)
+                base_id = stock_code[:4]
+                
                 # 2. 抓取基本面 (PE, PBR, Yield) - TaiwanStockPER
-                per_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id={stock_code}&start_date={start_date}"
+                per_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id={base_id}&start_date={start_date}"
                 res_per = requests.get(per_url, timeout=10)
                 per_json = res_per.json()
                 
@@ -69,11 +72,24 @@ def _fetch_single(stock_code, fetch_fundamentals=False, retries=3):
                 if per_json.get('msg') == 'success' and per_json.get('data'):
                     pe = float(per_json['data'][-1].get('PER', 0))
 
+                # 3. 抓取 EPS - TaiwanStockFinancialStatements
+                # 抓取過去一年的財報，並篩選 type == 'EPS'
+                fs_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={base_id}&start_date={start_date}"
+                res_fs = requests.get(fs_url, timeout=10)
+                fs_json = res_fs.json()
+                
+                eps = 0
+                if fs_json.get('msg') == 'success' and fs_json.get('data'):
+                    fs_df = pd.DataFrame(fs_json['data'])
+                    eps_df = fs_df[fs_df['type'] == 'EPS']
+                    if not eps_df.empty:
+                        eps = float(eps_df.iloc[-1].get('value', 0))
+
                 data['fundamentals'] = {
-                    'sector': '台股', # FinMind 需另外爬產業，暫時設為台股
+                    'sector': '台股',
                     'industry': '台股',
                     'pe': pe,
-                    'eps': 0, # FinMind EPS 需從 FinancialStatements 抓，稍後優化
+                    'eps': eps,
                     'roe': 0,
                     'rev_growth': 0
                 }

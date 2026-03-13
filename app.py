@@ -111,7 +111,7 @@ def parse_pasted_text(raw_text):
 # 🚀 主程式 UI 
 # ==========================================
 st.set_page_config(page_title="CBAS 鄭大戰情室 (v23)", layout="wide", page_icon="💎")
-st.title("💎 CBAS 鄭大戰情室 (單一主控版) v2.1.0-Master")
+st.title("💎 CBAS 鄭大戰情室 (單一主控版) v2.1.2-Master-Fundamentals-Fixed")
 
 @st.cache_data(ttl=300)
 def get_git_commit():
@@ -268,7 +268,7 @@ final_results = []
 if not candidates_pre.empty:
     with st.spinner("🚀 正在聯網批次抓取技術面、基本面數據並進行 R/P 量化評分..."):
         unique_codes = candidates_pre['股票代號'].unique().tolist()
-        bulk_tech_data = get_bulk_technical_data(unique_codes)
+        bulk_tech_data = get_bulk_technical_data(unique_codes, fetch_fundamentals=True)
 
         for _, row in candidates_pre.iterrows():
             tech = bulk_tech_data.get(row['股票代號'])
