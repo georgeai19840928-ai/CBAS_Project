@@ -281,7 +281,7 @@ if not candidates_pre.empty:
             if tech and tech['vol_avg_sheets'] < min_vol_avg: continue
             
             # 統一評分邏輯
-            r, p, lbl, gold = RPAnalyzer.calculate_score(row, tech, row['上市天數'], config)
+            r, p, lbl, gold, warnings = RPAnalyzer.calculate_score(row, tech, row['上市天數'], config)
 
             
             # 🔥 狀態顯示邏輯 (與 main.py 一致)

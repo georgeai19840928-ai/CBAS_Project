@@ -103,7 +103,7 @@ def run_daily_job():
         tech = bulk_tech_data.get(row['股票代號'])
         if tech and tech['vol_avg_sheets'] < config.get('filter_vol_min', 1000): continue
         
-        r, p, lbl, gold = RPAnalyzer.calculate_score(row, tech, row['上市天數'], config)
+        r, p, lbl, gold, warnings = RPAnalyzer.calculate_score(row, tech, row['上市天數'], config)
         
         res = row.to_dict()
         res.update({
