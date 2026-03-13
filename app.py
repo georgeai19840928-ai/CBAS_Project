@@ -35,8 +35,14 @@ if 'gemini_client' not in st.session_state:
     if GEMINI_API_KEY:
         try:
             from google import genai
+            logger.info("Initializing Gemini Client...")
             st.session_state.gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-        except: pass
+            logger.info("Gemini Client initialized successfully.")
+        except Exception as e:
+            logger.error(f"Gemini Client initialization failed: {str(e)}")
+            st.warning(f"⚠️ AI 功能啟動失敗: {str(e)}")
+    else:
+        logger.warning("GEMINI_API_KEY not found in environment.")
 
 # ==========================================
 # 💾 參數儲存系統 (Config System)
