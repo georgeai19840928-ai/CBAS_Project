@@ -119,7 +119,8 @@ def run_daily_job():
         return
         
     # 6. 選出菁英名單 (R低P高) 給 AI 分析
-    elite = candidates[(candidates['R值'] <= 5) & (candidates['P值'] >= 5)]
+    # 精選 = 篩選結果（數量一致）
+    elite = candidates
     if elite.empty:
         print("ℹ️ 雖有篩選標的，但無符合 AI 戰情室條件(R<=5, P>=5)之菁英目標。")
         return

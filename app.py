@@ -70,8 +70,21 @@ def send_line_broadcast(msg):
     except: pass
 
 def ask_gemini(prompt):
+    # 🔥 自動初始化 Client（如果尚未初始化）
     client = st.session_state.get('gemini_client')
-    if not client: return "⚠️ API Key Error: Client not initialized"
+    if not client:
+        # 嘗試從環境變數初始化
+        api_key = os.getenv("GEMINI_API_KEY")
+        if api_key:
+            try:
+                from google import genai
+                client = genai.Client(api_key=api_key)
+                st.session_state.gemini_client = client
+                logger.info("Gemini Client auto-initialized.")
+            except Exception as e:
+                return f"⚠️ AI 初始化失敗: {str(e)}"
+        else:
+            return "⚠️ 請設定 GEMINI_API_KEY 環境變數"
     
     # 🔥 自動重試機制 (解決 429 錯誤)
     max_retries = 3
@@ -467,7 +480,8 @@ with tab1:
         }, hide_index=True
     )
     
-    elite = candidates[(candidates['Risk'] <= 5) & (candidates['Potential'] >= 5)]
+    # 精選 = 篩選結果（數量一致）
+    elite = candidates
     st.markdown(f"### 🤖 AI 批量掃描 (精選 {len(elite)} 檔)")
     
     if st.button("🚀 啟動 AI 批量簡評"):
