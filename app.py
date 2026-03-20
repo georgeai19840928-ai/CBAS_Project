@@ -132,6 +132,21 @@ def parse_pasted_text(raw_text):
 st.set_page_config(page_title="CBAS 鄭大戰情室 (v23)", layout="wide", page_icon="💎")
 st.title("💎 CBAS 鄭大戰情室 (單一主控版) v2.1.2-Master-Fundamentals-Fixed")
 
+# --- 增加密碼驗證區塊 ---
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+    st.warning("🔒 系統已鎖定，請輸入密碼解鎖戰情室。")
+    pwd = st.text_input("請輸入登入密碼：", type="password")
+    if pwd == "282721":
+        st.session_state["authenticated"] = True
+        st.rerun()
+    elif pwd:
+        st.error("❌ 密碼錯誤！請重新輸入。")
+    st.stop()
+# --- 密碼驗證區塊結束 ---
+
 @st.cache_data(ttl=300)
 def get_git_commit():
     try:
