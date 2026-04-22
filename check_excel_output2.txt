@@ -1,0 +1,13 @@
+
+Rows 0 to 10:
+            0      1                    2     3       4       5                    6                    7         8         9      10        11     12        13       14   15     16        17    18   19     20     21      22
+0            1      2                    3     4       5       6                    7                    8         9        10     11        12     13        14       15   16     17        18    19   20     21     22      23
+1   元大證券股份有限公司    NaN                  NaN   NaN     NaN     NaN                  NaN                  NaN       NaN       NaN    NaN       NaN    NaN       NaN      NaN  NaN    NaN       NaN   NaN  NaN    NaN    NaN     NaN
+2        金融交易部    NaN                  NaN   NaN     NaN     NaN                  NaN                  NaN       NaN       NaN    NaN       NaN    NaN       NaN      NaN  NaN    NaN       NaN   NaN  NaN    NaN    NaN     NaN
+3  資產交換選擇權 報價表    NaN                  NaN   NaN     NaN     NaN                  NaN                  NaN       NaN       NaN    NaN       NaN    NaN       NaN      NaN  NaN    NaN       NaN   NaN  NaN    NaN    NaN     NaN
+4          NaN    NaN                  NaN   NaN     NaN     NaN                  NaN                  NaN       NaN       NaN    NaN       NaN    NaN       NaN      NaN  NaN    NaN       NaN   NaN  NaN    NaN    NaN     NaN
+5          NaN    日期：  2026-01-12 00:00:00   NaN     NaN     NaN                  NaN                  NaN       NaN       NaN    NaN       NaN    NaN       NaN      NaN  NaN    NaN       NaN   NaN         NaN    NaN     NaN
+6           名稱     代號                   擔保  TCRI    百元報價     折現率               選擇權到期日                  賣回日        年期       賣回價    轉換價      轉換價值   CB市價      溢/折價     參考單價   餘額   發行張數  波動度(21D)  承作限制   備註  可承作起日    NaN  spread
+7         台泥一永  11011                    無     4  0.0651  0.0325  2027-11-26 00:00:00  2027-12-10 00:00:00  1.909589       100   35.2  0.671875   98.8  0.470512   5310.0    1  80000     0.215   無限制  NaN    NaN   台泥一永   0.003
+8          上曜六  13166       有，板信商業銀行股份有限公司     8   0.021   0.024  2026-12-14 00:00:00  2026-12-27 00:00:00  0.956164     100.5   17.4   0.83908    113  0.346712    15100    1   4000     0.335   無限制  NaN    NaN    上曜六   0.003
+9        三地開發一  14381       有，台中商業銀行股份有限公司     8  0.0305   0.022  2027-12-06 00:00:00  2027-12-19 00:00:00  1.934247  101.5075  55.88  0.589656  119.7  1.029996  22750.0    1   9700      0.12   無限制  NaN    NaN  三地開發一   0.003

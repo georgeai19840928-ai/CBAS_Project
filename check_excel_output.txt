@@ -1,0 +1,11 @@
+Found 4 files: ['d:\\私人\\CBAS_Project\\CBAS報價表20260112.xlsx', 'd:\\私人\\CBAS_Project\\CBAS報價表20260126.xlsx', 'd:\\私人\\CBAS_Project\\CBAS報價表20260202.xlsx', 'd:\\私人\\CBAS_Project\\~$CBAS報價表20260126.xlsx']
+
+Columns: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+
+Head:
+            1   ...   23
+0   元大證券股份有限公司  ...  NaN
+1        金融交易部  ...  NaN
+2  資產交換選擇權 報價表  ...  NaN
+
+[3 rows x 23 columns]

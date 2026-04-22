@@ -15,5 +15,5 @@ __pycache__/
 *.log
 
 # User uploaded data files
-*.xlsx
+# *.xlsx
 ~$*.xlsx

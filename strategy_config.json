@@ -13,20 +13,21 @@
     "pot_vol_active": 2000,
     "pot_golden_min": 330,
     "pot_golden_max": 450,
-<<<<<<< Updated upstream
+    "filter_price_min": 105,
+    "filter_price_max": 120,
+    "filter_prem_min": 0,
+    "filter_prem_max": 15,
+    "filter_ratio_min": 80,
+    "filter_parity_min": 90,
+    "filter_parity_max": 105,
+    "filter_vol_min": 2000,
     "pot_volatility_high": 30,
     "pot_volatility_mid": 15,
     "death_line_price": 140,
-    "filter_price_min": 110,
-    "filter_price_max": 130,
-=======
-    "filter_price_min": 105,
-    "filter_price_max": 125,
->>>>>>> Stashed changes
-    "filter_prem_min": 5,
-    "filter_prem_max": 15,
-    "filter_ratio_min": 85,
-    "filter_parity_min": 90,
-    "filter_parity_max": 105,
-    "filter_vol_min": 2000
+    "max_positions": 10,
+    "entry_p_score": 6,
+    "exit_p_score": 4,
+    "take_profit_pct": 1.0,
+    "stop_loss_pct": -0.2,
+    "trade_mode": "CBAS"
 }

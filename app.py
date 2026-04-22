@@ -243,6 +243,11 @@ if df.empty:
     st.stop()
 
 # --- 側邊欄：濾網 ---
+st.sidebar.title("🛠️ CBAS 戰略控制台")
+if st.sidebar.button("🔄 清除資料快取 (強制刷新最新報表)", help="如果您剛剛更新了 Excel 檔案，請點擊此按鈕讓系統重新讀取！"):
+    st.cache_data.clear()
+    st.rerun()
+
 st.sidebar.markdown("---")
 st.sidebar.header("🔍 篩選濾網 (可儲存)")
 price_range = st.sidebar.slider("1. CB 市價", 80, 200, 
@@ -254,7 +259,22 @@ parity_range = st.sidebar.slider("4. 股價靠近轉換價 (%)", 50, 150,
                                  (config.get('filter_parity_min', 90), config.get('filter_parity_max', 110)))
 min_vol_avg = st.sidebar.number_input("5. 五日均量 > (張)", value=config.get('filter_vol_min', 1000), step=100)
 
+st.sidebar.markdown("---")
+st.sidebar.header("🎯 進出場條件 (限回測)")
+
+trade_mode_str = st.sidebar.radio("交易模式 (Trading Mode)", options=["CB現股 (全額交割)", "CBAS (可轉債選擇權)"], index=1)
+trade_mode_val = 'CBAS' if 'CBAS' in trade_mode_str else 'CB'
+
+max_pos = st.sidebar.number_input("最大持有檔數 (均分資金)", min_value=1, max_value=20, value=int(config.get("max_positions", 5)))
+entry_p = st.sidebar.number_input("強制進場 P 分數門檻", min_value=1, max_value=15, value=int(config.get("entry_p_score", 6)))
+exit_p = st.sidebar.number_input("強制退場 P 分數門檻", min_value=1, max_value=15, value=int(config.get("exit_p_score", 4)))
+
+sc1, sc2 = st.sidebar.columns(2)
+tp_pct = sc1.number_input("停利 (+%)", min_value=5, max_value=100, value=int(config.get("take_profit_pct", 0.20)*100))
+sl_pct_raw = sc2.number_input("停損 (-%)", min_value=1, max_value=50, value=int(abs(config.get("stop_loss_pct", -0.05))*100))
+
 if st.sidebar.button("💾 儲存濾網與評分設定 (Save Config)"):
+    config['trade_mode'] = trade_mode_val
     config['filter_price_min'] = price_range[0]
     config['filter_price_max'] = price_range[1]
     config['filter_prem_min'] = prem_range[0]
@@ -263,8 +283,32 @@ if st.sidebar.button("💾 儲存濾網與評分設定 (Save Config)"):
     config['filter_parity_min'] = parity_range[0]
     config['filter_parity_max'] = parity_range[1]
     config['filter_vol_min'] = min_vol_avg
+    
+    config['max_positions'] = max_pos
+    config['entry_p_score'] = entry_p
+    config['exit_p_score'] = exit_p
+    config['take_profit_pct'] = tp_pct * 0.01
+    config['stop_loss_pct'] = -1.0 * sl_pct_raw * 0.01
+    
     ConfigManager.save(config)
     st.sidebar.success("✅ 設定已儲存成功！下次開啟將自動載入。")
+
+# --- 暫存供本次運算使用 ---
+config['trade_mode'] = trade_mode_val
+config['filter_price_min'] = price_range[0]
+config['filter_price_max'] = price_range[1]
+config['filter_prem_min'] = prem_range[0]
+config['filter_prem_max'] = prem_range[1]
+config['filter_ratio_min'] = ratio_min
+config['filter_parity_min'] = parity_range[0]
+config['filter_parity_max'] = parity_range[1]
+config['filter_vol_min'] = min_vol_avg
+
+config['max_positions'] = max_pos
+config['entry_p_score'] = entry_p
+config['exit_p_score'] = exit_p
+config['take_profit_pct'] = tp_pct * 0.01
+config['stop_loss_pct'] = -1.0 * sl_pct_raw * 0.01
 
 # --- 側邊欄：評分參數 ---
 with st.sidebar.expander("⚙️ 專家評分參數 (Scoring)", expanded=False):
@@ -309,7 +353,7 @@ if not candidates_pre.empty:
             if tech and tech['vol_avg_sheets'] < min_vol_avg: continue
             
             # 統一評分邏輯
-            r, p, lbl, gold, warnings = RPAnalyzer.calculate_score(row, tech, row['上市天數'], config)
+            r, p, lbl, gold, warnings, details = RPAnalyzer.calculate_score(row, tech, row['上市天數'], config)
 
             
             # 🔥 狀態顯示邏輯 (與 main.py 一致)
@@ -332,6 +376,8 @@ if not candidates_pre.empty:
             res.update({
                 'R值': r, 'P值': p, '策略標籤': lbl,
                 '黃金期': gp_status,
+                'R_details': details.get('R', []),
+                'P_details': details.get('P', []),
                 '母股價': float(tech['price']) if tech and tech.get('price') is not None else None,
                 '均量': int(tech['vol_avg_sheets']) if tech and tech.get('vol_avg_sheets') is not None else None,
                 '60MA': round(float(tech['ma60']), 2) if tech and tech.get('ma60') is not None else None,
@@ -468,20 +514,31 @@ if candidates.empty:
 # ==========================================
 # 🔄 工作流
 # ==========================================
-tab1, tab2 = st.tabs(["🏆 Step 1: 戰情總覽與 AI 掃描", "🚀 Step 2: 單檔深度戰情"])
+tab1, tab2, tab3 = st.tabs(["🏆 Step 1: 戰情總覽與 AI 掃描", "🚀 Step 2: 單檔深度戰情", "📈 Step 3: 量化回測與最佳化"])
 
 with tab1:
-    st.write(f"篩選出 **{len(candidates)}** 檔標的。")
+    strict_mode = st.checkbox("✅ 僅顯示達到『強制進場門檻』的極致標的", value=False, help="打勾後，只有 P分數 >= 進場門檻，且 R分數 <= 10 的標的才會被顯示。")
+    
+    # 重新映射 R/P 為顯示名稱以免衝突
+    candidates = candidates.rename(columns={'R值': 'Risk', 'P值': 'Potential'})
+    
+    if strict_mode:
+        disp_df = candidates[(candidates['Potential'] >= entry_p) & (candidates['Risk'] <= 10)]
+    else:
+        disp_df = candidates
+        
+    st.write(f"篩選出 **{len(disp_df)}** 檔標的。")
     display_cols = [
         '代號', '名稱', '策略標籤', 'Risk', 'Potential', '黃金期',
         'CB市價', '溢/折價', '轉換價值', '餘額', 
         '母股價', '60MA', '87MA', '均量', 'EPS', 'PE', '上市日期顯示'
     ]
-    # 重新映射 R/P 為顯示名稱以免衝突
-    candidates = candidates.rename(columns={'R值': 'Risk', 'P值': 'Potential'})
     
-    st.dataframe(
-        candidates[display_cols],
+    st.markdown("💡 **提示：點擊下方表格的任一列，即可在下方查看該檔標的的詳細 R/P 評分明細！**")
+    event = st.dataframe(
+        disp_df[display_cols],
+        on_select="rerun",
+        selection_mode="single-row",
         column_config={
             "Risk": st.column_config.ProgressColumn("Risk", min_value=0, max_value=10, format="%d"),
             "Potential": st.column_config.ProgressColumn("Potential", min_value=0, max_value=10, format="%d"),
@@ -495,8 +552,27 @@ with tab1:
         }, hide_index=True
     )
     
-    # 精選 = 篩選結果（數量一致）
-    elite = candidates
+    if event and event.selection.rows:
+        selected_idx = event.selection.rows[0]
+        selected_row = disp_df.iloc[selected_idx]
+        
+        st.markdown("---")
+        st.markdown(f"#### 🔍 【{selected_row['代號']} {selected_row['名稱']}】評分透視報告")
+        c_r, c_p = st.columns(2)
+        
+        with c_r:
+            st.error(f"🚨 **Risk Score (風險) : {selected_row['Risk']} 分**")
+            for d in selected_row['R_details']:
+                st.markdown(f"- {d}")
+        
+        with c_p:
+            st.success(f"🚀 **Potential Score (潛力) : {selected_row['Potential']} 分**")
+            for d in selected_row['P_details']:
+                st.markdown(f"- {d}")
+        st.markdown("---")
+    
+    # 精選 = 篩選結果
+    elite = disp_df
     st.markdown(f"### 🤖 AI 批量掃描 (精選 {len(elite)} 檔)")
     
     if st.button("🚀 啟動 AI 批量簡評"):
@@ -582,3 +658,138 @@ with tab2:
             reply = ask_gemini(prompt)
             st.markdown(reply)
             send_line_broadcast(f"🔥 {row['名稱']} 全方位報告\n\n{reply}")
+
+with tab3:
+    st.markdown("### 📈 歷史回測與參數驗證 (Backtesting Engine)")
+    st.info("💡 此區塊會自動載入資料夾內所有的 `CBAS報價表*.xlsx` 歷史存檔，並透過歷史技術線圖（87MA、均量等）完整重現過去幾週的 R/P 評分。")
+    
+    col1, col2 = st.columns([1, 1])
+    init_cap = col1.number_input("初始資金 (NT$)", value=1000000, step=100000)
+    
+    if st.button("▶️ 啟動歷史回測 (Run Fast Backtest)"):
+        from core.backtest_loader import BacktestLoader
+        from core.backtester import CBASBacktester
+        from core.analyzer import RPAnalyzer
+        
+        with st.spinner("1️⃣ 正在讀取並合併本地所有的 CBAS報價表..."):
+            hist_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'historical_data')
+            loader = BacktestLoader(data_dir=hist_dir)
+            snapshots = loader.load_snapshots()
+            
+        if not snapshots:
+            st.error("❌ 找不到任何歷史報價表，請確保您的資料夾內有 `CBAS報價表*.xlsx`")
+        else:
+            st.success(f"✅ 成功載入 {len(snapshots)} 週的歷史快照！即將聯網抓取母股歷史 K 線...")
+            with st.spinner("2️⃣ 正在批次下載母股歷史 K 線與技術指標 (耗時稍長，請耐心等候)..."):
+                hist_data = loader.fetch_historical_market_data(snapshots)
+                
+            with st.spinner("3️⃣ 正在執行 R/P 策略引擎與交易模擬..."):
+                engine = CBASBacktester(initial_capital=init_cap, config=config)
+                results = engine.run(snapshots, hist_data, RPAnalyzer)
+                
+            metrics = results['metrics']
+            trades = results['trades']
+            eq_df = results['equity_curve']
+            
+            # --- 顯示結果 ---
+            st.markdown("#### 🏆 核心風險與績效指標看板 (KPI Metrics Board)")
+            
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("總報酬率", f"{metrics.get('Total Return', 0)*100:.2f}%")
+            m2.metric("夏普比率 (Sharpe)", f"{metrics.get('Sharpe Ratio', 0):.2f}")
+            m3.metric("索提諾比率 (Sortino)", f"{metrics.get('Sortino Ratio', 0):.2f}")
+            m4.metric("最大回撤 (MDD)", f"{metrics.get('Max Drawdown', 0)*100:.2f}%")
+            
+            m5, m6, m7, m8, m9 = st.columns(5)
+            m5.metric("勝率", f"{metrics.get('Win Rate', 0)*100:.1f}%")
+            
+            pl_ratio = metrics.get('P/L Ratio', 0)
+            pl_ratio_str = f"{pl_ratio:.2f}" if pl_ratio != float('inf') else "無虧損 (∞)"
+            m6.metric("盈虧比 (P/L Ratio)", pl_ratio_str)
+            
+            pf = metrics.get('Profit Factor', 0)
+            pf_str = f"{pf:.2f}" if pf != float('inf') else "無虧損 (∞)"
+            m7.metric("獲利因子 (PF)", pf_str)
+            
+            m8.metric("期望值 (Expectancy)", f"NT$ {metrics.get('Expectancy', 0):.0f}")
+            
+            m9.metric("交易次數", f"{metrics.get('Total Trades', 0)} 次")
+            
+            st.markdown("#### 📈 投資組合資金曲線 (Equity Curve)")
+            if not eq_df.empty:
+                st.line_chart(eq_df.set_index('Date')['Equity'])
+                
+            st.markdown("#### 📜 歷史交易明細表 (Trade Log)")
+            if not trades.empty:
+                trades_zh = trades.rename(columns={
+                    'code': '代號', 'entry_date': '進場日', 'exit_date': '出場日',
+                    'entry_price': '進場價', 'exit_price': '出場價', 'shares': '張數',
+                    'pnl': '總損益', 'pnl_pct': '報酬率', 'reason': '出場原因'
+                })
+                st.dataframe(trades_zh.style.format({
+                    '進場價': "{:.2f}",
+                    '出場價': "{:.2f}",
+                    '總損益': "{:.0f}",
+                    '報酬率': "{:.2%}"
+                }))
+            else:
+                st.info("回測期間內沒有任何符合策略的交易紀錄。")
+
+    st.markdown("---")
+    with st.expander("🛠️ 智能參數最佳化 (Optimizer)", expanded=False):
+        st.write("探索能帶來最大 Profit Factor 與最少 Drawdown 的參數組合。請選擇您想測試的區間：")
+        
+        st.markdown("##### 🛡️ 第一關：四大核心濾網 (Hard Filters)")
+        c1, c2, c3, c4 = st.columns(4)
+        opt_f_price_max = c1.multiselect("CB 市價上限", [115, 120, 125, 130], default=[120])
+        opt_f_prem_max = c2.multiselect("溢價率上限 (%)", [10, 15, 20, 25], default=[15])
+        opt_f_ratio_min = c3.multiselect("未轉換餘額下限 (%)", [70, 80, 90], default=[80])
+        opt_f_parity_min = c4.multiselect("股價靠近轉換價下限 (%)", [85, 90, 95], default=[90])
+        
+        st.markdown("##### 🎯 第二關：進出場與風控條件測試")
+        c5, c6, c7, c8 = st.columns(4)
+        opt_entry_p = c5.multiselect("進場 P 分數門檻", [5, 6, 7], default=[6])
+        opt_exit_p = c6.multiselect("出場 P 分數門檻", [3, 4, 5], default=[4])
+        opt_tp = c7.multiselect("停利門檻 (Take Profit)", [0.15, 0.20, 0.25], default=[0.20])
+        opt_sl = c8.multiselect("停損門檻 (Stop Loss)", [-0.03, -0.05, -0.08], default=[-0.05])
+        
+        if st.button("🔍 開始網格搜索最佳參數 (Grid Search)"):
+            param_grid = {
+                'filter_price_max': opt_f_price_max,
+                'filter_prem_max': opt_f_prem_max,
+                'filter_ratio_min': opt_f_ratio_min,
+                'filter_parity_min': opt_f_parity_min,
+                'entry_p_score': opt_entry_p,
+                'exit_p_score': opt_exit_p,
+                'take_profit_pct': opt_tp,
+                'stop_loss_pct': opt_sl
+            }
+            from core.optimizer import StrategyOptimizer
+            from core.backtest_loader import BacktestLoader
+            
+            with st.spinner("1️⃣ 載入歷史快照與母股 K 線..."):
+                hist_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'historical_data')
+                loader = BacktestLoader(data_dir=hist_dir)
+                snapshots = loader.load_snapshots()
+                if not snapshots:
+                    st.error("找不到歷史資料！")
+                else:
+                    hist_data = loader.fetch_historical_market_data(snapshots)
+                    
+                    with st.spinner("2️⃣ 執行全排列最佳化 (測試所有組合)..."):
+                        opt = StrategyOptimizer(base_config=config, snapshots=snapshots, hist_data=hist_data, initial_capital=init_cap)
+                        res_df = opt.optimize(param_grid)
+                        
+                    st.success(f"✅ 最佳化完成！共測試 {len(res_df)} 種組合。")
+                    st.markdown("#### 🏆 最佳回測參數排行 (依 Sharpe Ratio 排序)")
+                    res_zh = res_df.rename(columns={
+                        'filter_price_max': '市價上限', 'filter_prem_max': '溢價上限',
+                        'filter_ratio_min': '餘額下限', 'filter_parity_min': '甜蜜點下限',
+                        'entry_p_score': '進場P分', 'exit_p_score': '出場P分',
+                        'take_profit_pct': '停利%', 'stop_loss_pct': '停損%',
+                        'Total Return': '總報酬', 'Sharpe Ratio': '夏普比率', 'Sortino Ratio': '索提諾比率',
+                        'Max Drawdown': '最大回撤', 'Win Rate': '勝率', 'Profit Factor': '獲利因子',
+                        'Total Trades': '交易數'
+                    })
+                    st.dataframe(res_zh.style.highlight_max(subset=['夏普比率', '獲利因子', '總報酬'], color='lightgreen')
+                                             .highlight_min(subset=['最大回撤'], color='lightcoral'))
