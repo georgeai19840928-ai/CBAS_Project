@@ -99,17 +99,17 @@ def ask_gemini(prompt):
             return response.text
         except Exception as e:
             error_str = str(e)
-            # 判斷是否為限速錯誤
-            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+            # 判斷是否為限速 (429) 或是伺服器繁忙 (503)
+            if any(err in error_str for err in ["429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE"]):
                 if attempt < max_retries - 1:
                     wait_time = base_delay * (attempt + 1)
                     with st.empty():
                         for s in range(wait_time, 0, -1):
-                            st.caption(f"⏳ 觸發 API 限速保護，冷卻中... {s} 秒 (第 {attempt+1} 次重試)")
+                            st.caption(f"⏳ API 伺服器繁忙或限速，冷卻中... {s} 秒 (第 {attempt+1} 次重試)")
                             time.sleep(1)
                     continue
                 else:
-                    return "❌ 分析失敗：API 請求過於頻繁，請稍後再試。"
+                    return "❌ 分析失敗：API 伺服器持續繁忙或請求過於頻繁，請稍後再試。"
             else:
                 return f"AI Error: {error_str}"
 
