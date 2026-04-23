@@ -85,13 +85,29 @@ def _fetch_single(stock_code, fetch_fundamentals=False, retries=3):
                     if not eps_df.empty:
                         eps = float(eps_df.iloc[-1].get('value', 0))
 
+                # 4. 抓取營收 - TaiwanStockMonthRevenue
+                # 抓取過去 400 天的營收，計算最新一個月的年增率 (YoY)
+                rev_start_date = (datetime.now() - timedelta(days=400)).strftime('%Y-%m-%d')
+                rev_url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={base_id}&start_date={rev_start_date}"
+                res_rev = requests.get(rev_url, timeout=10)
+                rev_json = res_rev.json()
+                
+                rev_growth = 0
+                if rev_json.get('msg') == 'success' and rev_json.get('data'):
+                    rev_df = pd.DataFrame(rev_json['data'])
+                    if len(rev_df) >= 13:
+                        latest_rev = float(rev_df.iloc[-1].get('revenue', 0))
+                        last_year_rev = float(rev_df.iloc[-13].get('revenue', 0))
+                        if last_year_rev > 0:
+                            rev_growth = (latest_rev - last_year_rev) / last_year_rev
+
                 data['fundamentals'] = {
                     'sector': '台股',
                     'industry': '台股',
                     'pe': pe,
                     'eps': eps,
                     'roe': 0,
-                    'rev_growth': 0
+                    'rev_growth': rev_growth
                 }
                 
                 # 計算 RSI 與 MACD
