@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 # ==========================================
 load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-LINE_ACCESS_TOKEN = os.getenv("LINE_ACCESS_TOKEN")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 if 'gemini_client' not in st.session_state:
     st.session_state.gemini_client = None
@@ -49,6 +50,7 @@ if 'gemini_client' not in st.session_state:
 # ==========================================
 from config.settings import DEFAULT_CONFIG, STRATEGY_PRESETS, ConfigManager
 from core.analyzer import RPAnalyzer
+from services.notification import send_telegram_message
 
 
 config = ConfigManager.load()
@@ -62,12 +64,11 @@ config = ConfigManager.load()
 # ==========================================
 # 🛠️ 工具函數 (🔥 修正版 AI 呼叫)
 # ==========================================
-def send_line_broadcast(msg):
-    if not LINE_ACCESS_TOKEN: return
-    url = "https://api.line.me/v2/bot/message/broadcast"
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
-    try: requests.post(url, headers=headers, data=json.dumps({"messages": [{"type": "text", "text": msg}]}))
-    except: pass
+def send_telegram_broadcast(msg):
+    ok, message = send_telegram_message(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, msg)
+    if not ok:
+        st.warning(f"Telegram 推播失敗：{message}")
+    return ok
 
 def ask_gemini(prompt):
     # 🔥 自動初始化 Client（如果尚未初始化）
@@ -422,7 +423,7 @@ with st.expander("📖 點此展開：系統架構、AI 原理與 R/P 評分邏�
                     style=dashed;
                     Table [label="📊 戰情儀表板\n(篩選後清單)"];
                     AI_Agent [label="🤖 AI 首席分析師\n(Gemini 2.0)", shape=ellipse, fillcolor="#e1bee7"];
-                    LINE [label="📱 LINE 廣播\n(即時通知)", fillcolor="#c8e6c9"];
+                    Telegram [label="📱 Telegram 推播\n(即時通知)", fillcolor="#c8e6c9"];
                 }
                 
                 Excel -> Process;
@@ -430,12 +431,12 @@ with st.expander("📖 點此展開：系統架構、AI 原理與 R/P 評分邏�
                 Yahoo -> Process [label="API"];
                 Process -> Table;
                 Table -> AI_Agent [label="傳送評分數據"];
-                AI_Agent -> LINE [label="生成投資報告"];
+                AI_Agent -> Telegram [label="生成投資報告"];
             }
             """)
         except:
             st.info("⚠️ 您的環境未安裝 Graphviz，僅顯示文字流程：")
-            st.text("[Excel/TPEX/Yahoo] --> (Python量化引擎) --> [戰情儀表板] --> (AI 分析師) --> [LINE 廣播]")
+            st.text("[Excel/TPEX/Yahoo] --> (Python量化引擎) --> [戰情儀表板] --> (AI 分析師) --> [Telegram 推播]")
 
         st.info("""
         **資料來源細節：**
@@ -607,8 +608,8 @@ with tab1:
                 
             full_msg = "🏆 鄭大精選掃描報告 (深度指令版) 🏆\n\n" + clean_comment
             st.text_area("AI 報告預覽", full_msg, height=400) # 高度稍微加大
-            send_line_broadcast(full_msg)
-            st.success("深度指令報告已發送至 LINE！")
+            if send_telegram_broadcast(full_msg):
+                st.success("深度指令報告已發送至 Telegram！")
 
 with tab2:
     col1, col2 = st.columns([2,1])
@@ -657,7 +658,7 @@ with tab2:
         with st.spinner("AI 撰寫中..."):
             reply = ask_gemini(prompt)
             st.markdown(reply)
-            send_line_broadcast(f"🔥 {row['名稱']} 全方位報告\n\n{reply}")
+            send_telegram_broadcast(f"🔥 {row['名稱']} 全方位報告\n\n{reply}")
 
 with tab3:
     st.markdown("### 📈 歷史回測與參數驗證 (Backtesting Engine)")

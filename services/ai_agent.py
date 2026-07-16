@@ -42,3 +42,46 @@ class AIAgent:
                         return "❌ 分析失敗：API 請求過於頻繁，請稍後再試。"
                 else:
                     return f"AI Error: {error_str}"
+
+    def analyze_batch_summary(self, candidates, max_rows=12):
+        if candidates is None or candidates.empty:
+            return "本次篩選沒有符合條件的可轉債標的。"
+
+        rows = candidates.sort_values(
+            by=["P值", "R值"],
+            ascending=[False, True],
+        ).head(max_rows)
+
+        targets_info = []
+        for idx, (_, row) in enumerate(rows.iterrows(), start=1):
+            get = row.get
+            targets_info.append(
+                f"[{idx}] {get('名稱', '')}({get('代號', '')}) | "
+                f"R={get('R值', '')} P={get('P值', '')} | "
+                f"市價={get('CB市價', '')} | 溢價={get('溢/折價', '')}% | "
+                f"轉換價值={get('轉換價值', '')}% | 餘額={get('餘額', '')}% | "
+                f"均量={get('均量', '')}張 | 標籤={get('策略標籤', '')}"
+            )
+
+        prompt = f"""
+# Role
+你是一位精通台股可轉債與「鄭大 CB 策略」的投資研究助理。
+
+# Input
+以下是 CBAS 系統依照濾網與 R/P 模型選出的標的：
+{chr(10).join(targets_info)}
+
+# Decision Rules
+1. R 值越低代表風險越低，P 值越高代表潛力越高。
+2. 若 R 值偏高、溢價過高或價格遠離債底，必須明確提醒追高風險。
+3. 不要給保證獲利語氣，輸出應定位為投資研究參考。
+4. 優先指出 3 到 5 檔最值得追蹤的標的，並說明原因。
+
+# Output
+請用繁體中文輸出：
+- 今日總結
+- 精選追蹤名單
+- 風險提醒
+- 明日/下次追蹤重點
+"""
+        return self.ask(prompt)

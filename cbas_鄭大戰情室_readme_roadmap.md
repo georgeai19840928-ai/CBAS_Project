@@ -1,4 +1,4 @@
-# CBAS 鄭大戰情室（Convertible Bond Analysis System）
+﻿# CBAS 鄭大戰情室（Convertible Bond Analysis System）
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.10%2B-blue" />
@@ -32,7 +32,7 @@
   - EPS、本益比
 - R / P（Risk / Potential）量化評分模型
 - Gemini AI 戰術分析（支援 Retry / Exponential Backoff）
-- LINE Notify 即時戰報推播
+- Telegram 即時戰報推播
 
 ---
 
@@ -61,7 +61,7 @@ n8n_project_cbas/
 │
 ├── services/              # 服務層
 │   ├── ai_agent.py        # Gemini AI + Retry
-│   └── notification.py   # LINE Notify
+│   └── notification.py   # Telegram
 │
 └── ui/                    # 介面層
     └── system_guide.py   # 系統說明 / 架構圖
@@ -97,11 +97,12 @@ python main.py
 
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
-LINE_ACCESS_TOKEN=your_line_access_token_here
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+TELEGRAM_CHAT_ID=your_telegram_chat_id_here
 ```
 
 - 未設定 Gemini API：僅停用 AI 分析，其餘功能正常
-- 未設定 LINE Token：不影響本地分析
+- 未設定 Telegram Bot Token / Chat ID：不影響本地分析
 
 ---
 
@@ -127,7 +128,7 @@ LINE_ACCESS_TOKEN=your_line_access_token_here
 3. Yahoo Finance 補齊技術 / 基本面
 4. 套用濾網與 R/P 評分
 5. 呼叫 AI 產出戰術建議
-6. （選用）推播 LINE 戰報
+6. （選用）推播 Telegram 戰報
 
 ---
 

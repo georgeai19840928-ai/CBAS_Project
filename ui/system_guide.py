@@ -34,7 +34,7 @@ def render_guide(config):
                         style=dashed;
                         Table [label="📊 戰情儀表板\n(篩選後清單)"];
                         AI_Agent [label="🤖 AI 首席分析師\n(Gemini 2.0)", shape=ellipse, fillcolor="#e1bee7"];
-                        LINE [label="📱 LINE 廣播\n(即時通知)", fillcolor="#c8e6c9"];
+                        Telegram [label="📱 Telegram 推播\n(即時通知)", fillcolor="#c8e6c9"];
                     }
                     
                     Excel -> Process;
@@ -42,12 +42,12 @@ def render_guide(config):
                     Yahoo -> Process [label="API"];
                     Process -> Table;
                     Table -> AI_Agent [label="傳送評分數據"];
-                    AI_Agent -> LINE [label="生成投資報告"];
+                    AI_Agent -> Telegram [label="生成投資報告"];
                 }
                 """)
             except:
                 st.info("⚠️ 您的環境未安裝 Graphviz，僅顯示文字流程：")
-                st.text("[Excel/TPEX/Yahoo] --> (Python量化引擎) --> [戰情儀表板] --> (AI 分析師) --> [LINE 廣播]")
+                st.text("[Excel/TPEX/Yahoo] --> (Python量化引擎) --> [戰情儀表板] --> (AI 分析師) --> [Telegram 推播]")
 
             st.info("""
             **資料來源細節：**

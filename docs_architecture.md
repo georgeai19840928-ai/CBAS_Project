@@ -1,4 +1,4 @@
-# System Architecture
+﻿# System Architecture
 
 ## Overview
 CBAS 採用分層式架構（Layered Architecture），將資料來源、核心策略、外部服務與使用者介面清楚分離，以確保：
@@ -21,7 +21,7 @@ graph TD
     Analyzer --> Config[Strategy Config]
     Config --> Analyzer
     Analyzer --> AI[Gemini AI]
-    AI --> Notify[LINE Notify]
+    AI --> Notify[Telegram]
 ```
 
 ---
@@ -54,7 +54,7 @@ graph TD
   - Gemini AI 串接
   - Retry + Exponential Backoff
 - **notification.py**：
-  - LINE 戰報推播
+  - Telegram 戰報推播
 
 ### UI Layer (`ui/`)
 - **system_guide.py**：

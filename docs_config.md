@@ -1,4 +1,4 @@
-# Strategy Configuration Reference
+﻿# Strategy Configuration Reference
 
 ## strategy_config.json 概覽
 
@@ -127,7 +127,7 @@
 - 單一 R/P 策略引擎
 - Excel 輸入 + Streamlit UI
 - Gemini AI 戰術指令生成
-- LINE 即時戰報通知
+- Telegram 即時戰報通知
 
 ### v2.0（規劃中）
 - 多策略並存（保守 / 進攻 / 事件型）
